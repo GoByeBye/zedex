@@ -1,0 +1,31 @@
+# Git
+.git
+.gitignore
+.github
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Rust
+target/
+**/*.rs.bk
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local environment files
+.env
+.env.local
+
+# Cache directories
+.zedex-cache/
+extensions/
+
+# Documentation
+README*.md
+docs/ 
