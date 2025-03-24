@@ -1,0 +1,80 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+            extension: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows
+            extension: ".exe"
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: macos
+            extension: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: |
+          rustup update stable
+          rustup target add ${{ matrix.target }}
+          rustup component add clippy
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Extract version
+        id: extract_version
+        shell: bash
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build
+        run: cargo build --release --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Prepare artifact
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp target/release/zedex.exe artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-x86_64${{ matrix.extension }}
+
+      - name: Prepare artifact
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp target/release/zedex artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-x86_64${{ matrix.extension }}
+          chmod +x artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-x86_64${{ matrix.extension }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-x86_64
+          path: artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-x86_64${{ matrix.extension }}
+          if-no-files-found: error 
