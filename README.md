@@ -18,6 +18,9 @@ zedex serve
 # Alternatively to use zedex as a proxy
 zedex serve --proxy-mode
 
+# Start a local server on a custom host and port
+zedex serve --host 0.0.0.0 --port 8080
+
 # Download a specific extension
 zedex get extension extension-id-here
 

@@ -11,6 +11,7 @@ use crate::zed::{WrappedExtensions, Version, extensions_utils};
 #[derive(Clone)]
 pub struct ServerConfig {
     pub port: u16,
+    pub host: String,
     pub extensions_dir: PathBuf,
     pub releases_dir: Option<PathBuf>,
     pub proxy_mode: bool,
@@ -21,6 +22,7 @@ impl Default for ServerConfig {
         let root_dir = PathBuf::from(".zedex-cache");
         Self {
             port: 2654,
+            host: "127.0.0.1".to_string(),
             extensions_dir: root_dir.clone(),
             releases_dir: Some(root_dir.join("releases")),
             proxy_mode: false,
@@ -43,17 +45,46 @@ impl LocalServer {
             config: config.clone(),
         });
 
-        info!("Starting local Zed extension server on port {}", config.port);
+        info!("Starting local Zed extension server on {}:{}", config.host, config.port);
         info!("Serving extensions from {:?}", config.extensions_dir);
         if let Some(releases_dir) = &config.releases_dir {
             info!("Serving releases from {:?}", releases_dir);
-            info!("Platform-specific version files available:");
-            // List available platform-specific version files
+            
+            // List available assets and platform-specific version files
             if releases_dir.exists() {
                 for entry in (fs::read_dir(releases_dir)?).flatten() {
                     let path = entry.path();
-                    if path.is_file() && path.file_name().and_then(|n| n.to_str()).is_some_and(|s| s.starts_with("latest-version-")) {
-                        info!("  - {:?}", path.file_name().unwrap_or_default());
+                    if path.is_dir() {
+                        let asset_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+                        info!("Asset directory: {}", asset_name);
+                        
+                        // List platform-specific version files
+                        let mut found_files = false;
+                        if let Ok(dir_entries) = fs::read_dir(&path) {
+                            for file_entry in dir_entries.flatten() {
+                                let file_path = file_entry.path();
+                                if file_path.is_file() && file_path.file_name()
+                                    .and_then(|n| n.to_str())
+                                    .map(|s| s.starts_with("latest-version-"))
+                                    .unwrap_or(false) {
+                                    if !found_files {
+                                        info!("  Platform-specific version files:");
+                                        found_files = true;
+                                    }
+                                    info!("    - {}", file_path.file_name().unwrap_or_default().to_string_lossy());
+                                }
+                            }
+                        }
+                        
+                        if !found_files {
+                            // Check for generic version file
+                            let generic_version = path.join("latest-version.json");
+                            if generic_version.exists() {
+                                info!("  Generic version file available");
+                            } else {
+                                info!("  No version files available yet");
+                            }
+                        }
                     }
                 }
             } else {
@@ -83,6 +114,16 @@ impl LocalServer {
                     .to(get_latest_version)
             );
             
+            // Add static file serving for releases if directory is configured
+            if let Some(releases_dir) = &config.releases_dir {
+                if releases_dir.exists() {
+                    app = app.service(
+                        Files::new("/releases", releases_dir)
+                            .show_files_listing()
+                    );
+                }
+            }
+            
             // API proxy should come after specific routes but before generic file serving
             app = app.service(web::resource("/api/{path:.*}").to(proxy_api_request));
             
@@ -94,7 +135,7 @@ impl LocalServer {
             
             app
         })
-        .bind(("127.0.0.1", config.port))?
+        .bind((config.host.as_str(), config.port))?
         .run()
         .await?;
 
@@ -188,33 +229,41 @@ async fn get_latest_version(
     data: web::Data<ServerData>,
     query: web::Query<std::collections::HashMap<String, String>>,
 ) -> impl Responder {
-    // Extract OS and architecture from query parameters
-    // Default to macos-x86_64 if not provided
+    // Extract OS, architecture and asset type from query parameters
     let os = query.get("os").cloned().unwrap_or_else(|| "macos".to_string());
     let arch = query.get("arch").cloned().unwrap_or_else(|| "x86_64".to_string());
+    let asset = query.get("asset").cloned().unwrap_or_else(|| "zed".to_string());
     
-    info!("Latest version request for os={}, arch={}", os, arch);
+    info!("Latest version request for asset={}, os={}, arch={}", asset, os, arch);
     
     if let Some(releases_dir) = &data.config.releases_dir {
-        // Try to find platform-specific version file
-        let version_file = releases_dir.join(format!("latest-version-{}-{}.json", os, arch));
+        // Determine the asset-specific directory
+        let asset_dir = releases_dir.join(&asset);
         
-        if !version_file.exists() {
-            debug!("Platform-specific version file not found: {:?}", version_file);
-            // If platform-specific file doesn't exist, try generic one (for backward compatibility)
-            let generic_file = releases_dir.join("latest-version.json");
-            if generic_file.exists() {
-                info!("Using generic version file: {:?}", generic_file);
-                return read_version_file(generic_file);
-            }
-        } else {
-            info!("Found platform-specific version file: {:?}", version_file);
-            return read_version_file(version_file);
+        // Try to find platform-specific version file first
+        let platform_version_file = asset_dir.join(format!("latest-version-{}-{}.json", os, arch));
+        
+        if platform_version_file.exists() {
+            info!("Found platform-specific version file: {:?}", platform_version_file);
+            return read_version_file(platform_version_file, os.clone(), arch.clone(), &asset);
+        }
+        
+        // Look for the generic latest version file as fallback
+        let version_file = asset_dir.join("latest-version.json");
+        
+        if version_file.exists() {
+            info!("Found generic version file: {:?}", version_file);
+            return read_version_file(version_file, os, arch, &asset);
+        }
+        
+        // If we're in proxy mode and the file doesn't exist, proxy the request
+        if data.config.proxy_mode {
+            return proxy_version_request(os, arch, asset).await;
         }
         
         HttpResponse::NotFound()
             .content_type("text/plain")
-            .body(format!("Version file not found for platform {}-{}", os, arch))
+            .body(format!("Version file not found for asset {} on platform {}-{}", asset, os, arch))
     } else {
         HttpResponse::NotFound()
             .content_type("text/plain")
@@ -222,13 +271,54 @@ async fn get_latest_version(
     }
 }
 
-// Helper function to read and parse a version file
-fn read_version_file(file_path: PathBuf) -> HttpResponse {
+// Helper function to read and parse a version file, replacing URLs with local ones if needed
+fn read_version_file(file_path: PathBuf, os: String, arch: String, asset: &str) -> HttpResponse {
     match fs::read_to_string(&file_path) {
         Ok(content) => {
             match serde_json::from_str::<Version>(&content) {
-                Ok(version) => {
+                Ok(mut version) => {
                     debug!("Successfully parsed version: {}", version.version);
+                    
+                    // Extract version from the parsed version object
+                    let version_number = &version.version;
+                    
+                    // First check for platform-specific file
+                    let parent_dir = file_path.parent().unwrap_or(&file_path);
+                    let local_file = parent_dir.join(format!("{}-{}-{}-{}.gz", 
+                        asset, version_number, os, arch));
+                    
+                    if local_file.exists() {
+                        // If the local file exists, replace the URL with a local one
+                        // This assumes the server is running and accessible
+                        let local_path = format!("/releases/{}/{}-{}-{}-{}.gz", 
+                            asset, asset, version_number, os, arch);
+                        
+                        debug!("Using local file path: {}", local_path);
+                        version.url = local_path;
+                    } else {
+                        // If platform-specific file doesn't exist, check if we have any matching
+                        // files that might work (for different platforms)
+                        let asset_dir = parent_dir;
+                        
+                        if let Ok(dir_entries) = fs::read_dir(asset_dir) {
+                            for entry in dir_entries.flatten() {
+                                let path = entry.path();
+                                let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                                
+                                // Check if the filename contains the asset and version
+                                if filename.starts_with(&format!("{}-{}", asset, version_number)) && 
+                                   filename.ends_with(".gz") {
+                                    
+                                    // Use this file, even if for a different platform
+                                    let local_path = format!("/releases/{}/{}", asset, filename);
+                                    debug!("No exact platform match. Using alternative: {}", local_path);
+                                    version.url = local_path;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
                     HttpResponse::Ok()
                         .content_type("application/json")
                         .json(version)
@@ -246,6 +336,50 @@ fn read_version_file(file_path: PathBuf) -> HttpResponse {
             HttpResponse::NotFound()
                 .content_type("text/plain")
                 .body(format!("Version file not found: {}", e))
+        }
+    }
+}
+
+// Proxy a request for the latest version to zed.dev
+async fn proxy_version_request(os: String, arch: String, asset: String) -> HttpResponse {
+    debug!("Proxying version request for {}-{}-{} to zed.dev", asset, os, arch);
+    
+    let client = reqwest::Client::new();
+    let url = format!("https://zed.dev/api/releases/latest?asset={}&os={}&arch={}", 
+                      asset, os, arch);
+    
+    match client.get(&url).send().await {
+        Ok(response) => {
+            match response.error_for_status() {
+                Ok(response) => {
+                    match response.bytes().await {
+                        Ok(bytes) => {
+                            HttpResponse::Ok()
+                                .content_type("application/json")
+                                .body(bytes)
+                        },
+                        Err(e) => {
+                            error!("Error reading proxied response: {}", e);
+                            HttpResponse::InternalServerError()
+                                .body(format!("Error reading proxied response: {}", e))
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("Error from proxied server: {}", e);
+                    match e.status() {
+                        Some(status) => HttpResponse::build(http::StatusCode::from_u16(status.as_u16()).unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR))
+                            .body(format!("Error from zed.dev: {}", e)),
+                        None => HttpResponse::InternalServerError()
+                            .body(format!("Error from zed.dev: {}", e))
+                    }
+                }
+            }
+        },
+        Err(e) => {
+            error!("Error proxying request: {}", e);
+            HttpResponse::InternalServerError()
+                .body(format!("Error proxying request: {}", e))
         }
     }
 }
@@ -356,4 +490,4 @@ async fn proxy_api_request(
             HttpResponse::InternalServerError().body(format!("Error proxying request: {}", e))
         }
     }
-} 
+}

@@ -146,6 +146,16 @@ impl Client {
     
     /// Get the latest Zed version information for the current platform
     pub async fn get_latest_version(&self) -> Result<Version> {
+        self.get_latest_release_version("zed").await
+    }
+
+    /// Get the latest Zed Remote Server version information for the current platform
+    pub async fn get_latest_remote_server_version(&self) -> Result<Version> {
+        self.get_latest_release_version("zed-remote-server").await
+    }
+
+    /// Get the latest version information for a specific Zed asset
+    pub async fn get_latest_release_version(&self, asset: &str) -> Result<Version> {
         // Determine OS and architecture
         let os = self.platform_os.clone().unwrap_or_else(|| env::consts::OS.to_string());
         let arch = self.platform_arch.clone().unwrap_or_else(|| {
@@ -161,7 +171,7 @@ impl Client {
             return Err(ZedError::PlatformNotSupported("Windows is not yet supported by Zed. Currently, Zed is only available for macOS and Linux.".to_string()).into());
         }
         
-        let url = format!("{}/api/releases/latest?asset=zed&os={}&arch={}", self.host, os, arch);
+        let url = format!("{}/api/releases/latest?asset={}&os={}&arch={}", self.host, asset, os, arch);
         debug!("Fetching latest version information from URL: {}", url);
         
         let response = self.http_client
@@ -172,5 +182,51 @@ impl Client {
 
         let version: Version = response.json().await?;
         Ok(version)
+    }
+
+    /// Download a release asset with progress reporting
+    pub async fn download_release_asset_with_progress(
+        &self,
+        version: &Version,
+        progress_callback: impl Fn(u64, u64) + 'static
+    ) -> Result<Vec<u8>> {
+        debug!("Downloading release asset from URL: {}", version.url);
+        
+        let response = match self.http_client
+            .get(&version.url)
+            .send()
+            .await {
+                Ok(resp) => {
+                    debug!("Received response with status: {}", resp.status());
+                    match resp.error_for_status() {
+                        Ok(r) => r,
+                        Err(e) => {
+                            error!("Error status from response: {}", e);
+                            return Err(anyhow::anyhow!("Request failed: {}", e));
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("Error sending request: {}", e);
+                    return Err(anyhow::anyhow!("Request failed: {}", e));
+                }
+            };
+            
+        let total_size = response.content_length().unwrap_or(0);
+        let mut downloaded: u64 = 0;
+        let mut bytes = Vec::new();
+        
+        let mut stream = response.bytes_stream();
+        use futures_util::StreamExt;
+        
+        while let Some(item) = stream.next().await {
+            let chunk = item?;
+            downloaded += chunk.len() as u64;
+            bytes.extend_from_slice(&chunk);
+            progress_callback(downloaded, total_size);
+        }
+        
+        debug!("Downloaded {} bytes", bytes.len());
+        Ok(bytes)
     }
 } 

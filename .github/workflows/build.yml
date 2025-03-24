@@ -1,0 +1,135 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build for ${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+            arch: x86_64
+            extension: ""
+          - os: ubuntu-latest 
+            target: aarch64-unknown-linux-gnu
+            platform: linux
+            arch: arm64
+            extension: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows
+            arch: x86_64
+            extension: ".exe"
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: macos
+            arch: x86_64
+            extension: ""
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: macos
+            arch: arm64
+            extension: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: |
+          rustup update stable
+          rustup target add ${{ matrix.target }}
+          rustup component add clippy
+
+      - name: Extract version
+        id: extract_version
+        shell: bash
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Prepare artifact
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp target/release/zedex.exe artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
+
+      - name: Prepare artifact
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp target/release/zedex artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
+          chmod +x artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
+
+      - name: Generate checksums
+        shell: bash
+        working-directory: artifacts
+        run: |
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            shasum -a 256 zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }} > zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}.sha256
+          else
+            sha256sum zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }} > zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}.sha256
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
+            artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List files
+        run: find artifacts -type f | sort
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: artifacts/**/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
