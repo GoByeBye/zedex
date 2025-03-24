@@ -13,13 +13,22 @@ As such I made this over the weekend. A lot of the heavy lifting was made by Pra
 zedex get all-extensions
 
 # Start a local server on the default port (2654)
-zedex serve --local-mode
+zedex serve
+
+# Alternatively to use zedex as a proxy
+zedex serve --proxy-mode
+
+# Start a local server on a custom host and port
+zedex serve --host 0.0.0.0 --port 8080
 
 # Download a specific extension
 zedex get extension extension-id-here
 
 # Fetch the extension index
 zedex get extension-index
+
+# Get the latest release for the autoupdate check when you launch zed
+zedex release latest
 
 # Show available commands and options
 zedex --help
@@ -29,7 +38,7 @@ To configure Zed to use your local server, add this to your Zed config:
 
 ```json
 {
-  "extension_server": "http://localhost:2654"
+  "server_url": "http://127.0.0.1:2654"
 }
 ```
 
