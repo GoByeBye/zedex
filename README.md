@@ -28,7 +28,10 @@ zedex get extension extension-id-here
 zedex get extension-index
 
 # Get the latest release for the autoupdate check when you launch zed
-zedex release latest
+zedex release download
+
+# Get the latest zed-remote-server releases
+zexex release download-remote-server
 
 # Show available commands and options
 zedex --help
@@ -57,7 +60,7 @@ cargo build --release
 ```
 
 ## Wishlist
-- [ ] Support updating extensions by the call Zed makes on startup
+- [x] Support updating extensions by the call Zed makes on startup
 - [ ] Release notes mirror as in praktisk's implementation 
 - [ ] Better error handling for network issues
 - [ ] Add caching layer for frequently accessed extensions
