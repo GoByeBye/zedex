@@ -13,7 +13,10 @@ As such I made this over the weekend. A lot of the heavy lifting was made by Pra
 zedex get all-extensions
 
 # Start a local server on the default port (2654)
-zedex serve --local-mode
+zedex serve
+
+# Alternatively to use zedex as a proxy
+zedex serve --proxy-mode
 
 # Download a specific extension
 zedex get extension extension-id-here
