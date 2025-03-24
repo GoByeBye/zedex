@@ -96,6 +96,12 @@ jobs:
             platform: linux
             arch: arm64
             extension: ""
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: macos
+            arch: arm64
+            extension: ""
+
 
     steps:
       - uses: actions/checkout@v4
