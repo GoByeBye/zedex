@@ -12,25 +12,44 @@ env:
 
 jobs:
   build:
-    name: Build on ${{ matrix.os }}
+    name: Build for ${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
         include:
+          # x86_64 builds
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             platform: linux
+            arch: x86_64
             extension: ""
+            use_cross: false
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             platform: windows
+            arch: x86_64
             extension: ".exe"
+            use_cross: false
           - os: macos-latest
             target: x86_64-apple-darwin
             platform: macos
+            arch: x86_64
             extension: ""
+            use_cross: false
+          # ARM builds
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            platform: linux
+            arch: arm64
+            extension: ""
+            use_cross: true
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-gnueabihf
+            platform: linux
+            arch: armv7
+            extension: ""
+            use_cross: true
 
     steps:
       - uses: actions/checkout@v4
@@ -41,8 +60,12 @@ jobs:
           rustup target add ${{ matrix.target }}
           rustup component add clippy
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+      - name: Install cross-compilation tools
+        if: matrix.use_cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf libc6-dev-arm64-cross libc6-dev-armhf-cross
+          cargo install cross
 
       - name: Extract version
         id: extract_version
@@ -51,10 +74,21 @@ jobs:
           VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
       - name: Build
+        if: ${{ !matrix.use_cross }}
         run: cargo build --release --verbose
 
+      - name: Build with cross
+        if: matrix.use_cross
+        run: cross build --release --verbose --target ${{ matrix.target }}
+
       - name: Run tests
+        if: ${{ !matrix.use_cross }}
         run: cargo test --verbose
 
       - name: Prepare artifact
@@ -62,19 +96,27 @@ jobs:
         shell: bash
         run: |
           mkdir -p artifacts
-          cp target/release/zedex.exe artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-x86_64${{ matrix.extension }}
+          cp target/release/zedex.exe artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
 
-      - name: Prepare artifact
-        if: runner.os != 'Windows'
+      - name: Prepare artifact (non-cross builds)
+        if: runner.os != 'Windows' && !matrix.use_cross
         shell: bash
         run: |
           mkdir -p artifacts
-          cp target/release/zedex artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-x86_64${{ matrix.extension }}
-          chmod +x artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-x86_64${{ matrix.extension }}
+          cp target/release/zedex artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
+          chmod +x artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
+
+      - name: Prepare artifact (cross builds)
+        if: matrix.use_cross
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/zedex artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
+          chmod +x artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-x86_64
-          path: artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-x86_64${{ matrix.extension }}
+          name: zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
           if-no-files-found: error 
