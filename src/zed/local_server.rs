@@ -143,6 +143,80 @@ struct ServerData {
     config: ServerConfig,
 }
 
+// Shared filtering function to handle all extension filtering use cases
+fn filter_extensions_with_params(
+    extensions: &WrappedExtensions,
+    filter: Option<&str>,
+    min_schema_version: Option<i32>,
+    max_schema_version: Option<i32>,
+    min_wasm_api_version: Option<&str>,
+    max_wasm_api_version: Option<&str>,
+    provides: Option<&str>,
+    extension_ids: Option<&[&str]>,
+) -> crate::zed::Extensions {
+    // First apply the standard extensions_utils filtering (text filter, max_schema, provides)
+    let filtered_by_standard = extensions_utils::filter_extensions(
+        &extensions.data,
+        filter,
+        max_schema_version,
+        provides,
+    );
+    
+    // Then filter by min_schema_version if specified
+    let filtered_by_min_schema = if let Some(min_version) = min_schema_version {
+        filtered_by_standard.into_iter()
+            .filter(|ext| ext.schema_version >= min_version)
+            .collect()
+    } else {
+        filtered_by_standard
+    };
+    
+    // Then filter by extension IDs if specified
+    let filtered_by_ids = if let Some(ids) = extension_ids {
+        if !ids.is_empty() {
+            filtered_by_min_schema.into_iter()
+                .filter(|ext| ids.contains(&ext.id.as_str()))
+                .collect()
+        } else {
+            filtered_by_min_schema
+        }
+    } else {
+        filtered_by_min_schema
+    };
+    
+    // Apply WASM API version filtering if specified
+    if min_wasm_api_version.is_some() || max_wasm_api_version.is_some() {
+        filtered_by_ids.into_iter()
+            .filter(|ext| {
+                // For extensions without a WASM API version, include them in the results
+                if ext.wasm_api_version.is_none() {
+                    return true;
+                }
+                
+                let ext_version = ext.wasm_api_version.as_ref().unwrap();
+                
+                // Check min version if specified
+                if let Some(min_version) = min_wasm_api_version {
+                    if ext_version.as_str() < min_version {
+                        return false;
+                    }
+                }
+                
+                // Check max version if specified
+                if let Some(max_version) = max_wasm_api_version {
+                    if ext_version.as_str() > max_version {
+                        return false;
+                    }
+                }
+                
+                true
+            })
+            .collect()
+    } else {
+        filtered_by_ids
+    }
+}
+
 async fn get_extensions_index(
     data: web::Data<ServerData>,
     query: web::Query<std::collections::HashMap<String, String>>,
@@ -162,12 +236,16 @@ async fn get_extensions_index(
                     debug!("Filtering extensions: filter={:?}, max_schema_version={:?}, provides={:?}", 
                           filter, max_schema_version, provides);
                     
-                    // Apply filtering
-                    let filtered_extensions = extensions_utils::filter_extensions(
-                        &extensions.data,
+                    // Apply filtering using the consolidated function
+                    let filtered_extensions = filter_extensions_with_params(
+                        &extensions,
                         filter,
+                        None, // min_schema_version not used for /extensions
                         max_schema_version,
+                        None, // min_wasm_api_version not used for /extensions
+                        None, // max_wasm_api_version not used for /extensions
                         provides,
+                        None, // extension_ids not used for /extensions
                     );
                     
                     info!("Serving {} filtered extensions from index", filtered_extensions.len());
@@ -507,66 +585,17 @@ async fn check_extension_updates(
         Ok(content) => {
             match serde_json::from_str::<WrappedExtensions>(&content) {
                 Ok(extensions) => {
-                    // First filter by schema version and provides (similar to get_extensions_index)
-                    let filtered_by_schema = extensions_utils::filter_extensions(
-                        &extensions.data,
-                        None, // No text filter
+                    // Apply all filters using the consolidated function
+                    let filtered_extensions = filter_extensions_with_params(
+                        &extensions,
+                        None, // No text filter for updates
+                        min_schema_version,
                         max_schema_version,
-                        None, // No provides filter
+                        min_wasm_api_version,
+                        max_wasm_api_version,
+                        None, // No provides filter for updates
+                        if extension_ids.is_empty() { None } else { Some(&extension_ids) },
                     );
-                    
-                    // Then filter by min_schema_version (not part of the extensions_utils::filter_extensions function)
-                    let filtered_by_min_schema = if let Some(min_version) = min_schema_version {
-                        filtered_by_schema.into_iter()
-                            .filter(|ext| ext.schema_version >= min_version)
-                            .collect()
-                    } else {
-                        filtered_by_schema
-                    };
-                    
-                    // Then filter by the requested extension IDs
-                    let filtered_extensions = if !extension_ids.is_empty() {
-                        filtered_by_min_schema.into_iter()
-                            .filter(|ext| extension_ids.contains(&ext.id.as_str()))
-                            .collect()
-                    } else {
-                        filtered_by_min_schema
-                    };
-                    
-                    // Apply WASM API version filtering if specified
-                    let filtered_extensions = if min_wasm_api_version.is_some() || max_wasm_api_version.is_some() {
-                        filtered_extensions.into_iter()
-                            .filter(|ext| {
-                                // For extensions without a WASM API version, include them in the results
-                                // This matches the behavior of the official API
-                                if ext.wasm_api_version.is_none() {
-                                    return true;
-                                }
-                                
-                                let ext_version = ext.wasm_api_version.as_ref().unwrap();
-                                
-                                // Check min version if specified
-                                if let Some(min_version) = min_wasm_api_version {
-                                    // Simple string comparison (assumes semver format)
-                                    if ext_version.as_str() < min_version {
-                                        return false;
-                                    }
-                                }
-                                
-                                // Check max version if specified
-                                if let Some(max_version) = max_wasm_api_version {
-                                    // Simple string comparison (assumes semver format)
-                                    if ext_version.as_str() > max_version {
-                                        return false;
-                                    }
-                                }
-                                
-                                true
-                            })
-                            .collect()
-                    } else {
-                        filtered_extensions
-                    };
                     
                     info!("Serving {} updated extensions from index", filtered_extensions.len());
                     
