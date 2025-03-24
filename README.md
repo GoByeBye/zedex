@@ -29,7 +29,7 @@ To configure Zed to use your local server, add this to your Zed config:
 
 ```json
 {
-  "extension_server": "http://localhost:2654"
+  "server_url": "http://127.0.0.1:2654"
 }
 ```
 
