@@ -48,6 +48,10 @@ enum Commands {
         /// Port to run the server on
         #[clap(long, default_value = "2654")] // If you're reading this, you're a nerd. And yes it's ZED. Z=26 E=5 D=4
         port: u16,
+
+        /// Host IP address to bind the server to
+        #[clap(long, default_value = "127.0.0.1")]
+        host: String,
         
         /// Directory containing extension archives and metadata
         #[clap(long)]
@@ -514,7 +518,7 @@ async fn main() -> Result<()> {
                 }
             },
         },
-        Commands::Serve { port, extensions_dir, releases_dir, proxy_mode } => {
+        Commands::Serve { port, host, extensions_dir, releases_dir, proxy_mode } => {
             // Resolve directories from root_dir if not provided
             let extensions_dir = extensions_dir.unwrap_or_else(|| root_dir.clone());
             let releases_dir = releases_dir.or_else(|| Some(root_dir.join("releases")));
@@ -522,6 +526,7 @@ async fn main() -> Result<()> {
             // Create and configure the local server
             let config = zed::ServerConfig {
                 port,
+                host,
                 extensions_dir,
                 releases_dir,
                 proxy_mode,

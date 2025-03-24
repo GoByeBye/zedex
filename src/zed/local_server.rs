@@ -11,6 +11,7 @@ use crate::zed::{WrappedExtensions, Version, extensions_utils};
 #[derive(Clone)]
 pub struct ServerConfig {
     pub port: u16,
+    pub host: String,
     pub extensions_dir: PathBuf,
     pub releases_dir: Option<PathBuf>,
     pub proxy_mode: bool,
@@ -21,6 +22,7 @@ impl Default for ServerConfig {
         let root_dir = PathBuf::from(".zedex-cache");
         Self {
             port: 2654,
+            host: "127.0.0.1".to_string(),
             extensions_dir: root_dir.clone(),
             releases_dir: Some(root_dir.join("releases")),
             proxy_mode: false,
@@ -43,7 +45,7 @@ impl LocalServer {
             config: config.clone(),
         });
 
-        info!("Starting local Zed extension server on port {}", config.port);
+        info!("Starting local Zed extension server on {}:{}", config.host, config.port);
         info!("Serving extensions from {:?}", config.extensions_dir);
         if let Some(releases_dir) = &config.releases_dir {
             info!("Serving releases from {:?}", releases_dir);
@@ -94,7 +96,7 @@ impl LocalServer {
             
             app
         })
-        .bind(("127.0.0.1", config.port))?
+        .bind((config.host.as_str(), config.port))?
         .run()
         .await?;
 
@@ -356,4 +358,4 @@ async fn proxy_api_request(
             HttpResponse::InternalServerError().body(format!("Error proxying request: {}", e))
         }
     }
-} 
+}
