@@ -3,6 +3,8 @@ name: Build
 on:
   push:
     branches: [ main ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -86,9 +88,44 @@ jobs:
           cp target/release/zedex artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
           chmod +x artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
 
+      - name: Generate checksums
+        shell: bash
+        working-directory: artifacts
+        run: |
+          sha256sum zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }} > zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}.sha256
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
-          path: artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
+          path: |
+            artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}
+            artifacts/zedex-v${{ steps.extract_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.extension }}.sha256
           if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List files
+        run: find artifacts -type f | sort
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: artifacts/**/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
