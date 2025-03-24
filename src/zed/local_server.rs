@@ -20,7 +20,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         let root_dir = PathBuf::from(".zedex-cache");
         Self {
-            port: 3000,
+            port: 2654,
             extensions_dir: root_dir.clone(),
             releases_dir: Some(root_dir.join("releases")),
             proxy_mode: false,
