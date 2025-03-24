@@ -24,6 +24,9 @@ zedex get extension extension-id-here
 # Fetch the extension index
 zedex get extension-index
 
+# Get the latest release for the autoupdate check when you launch zed
+zedex release latest
+
 # Show available commands and options
 zedex --help
 ```
