@@ -483,10 +483,6 @@ async fn main() -> Result<()> {
                                         Ok(_) => info!("Successfully downloaded Zed {} for {}-{} to {:?}", version.version, os, arch, file_path),
                                         Err(e) => error!("Failed to write release file for {}-{}: {}", os, arch, e),
                                     }
-                                    
-                                    // For backward compatibility, also save the latest version info to a common file
-                                    let common_version_file = release_dir.join("latest-version.json");
-                                    std::fs::write(&common_version_file, serde_json::to_string_pretty(&version)?)?;
                                 },
                                 Err(e) => {
                                     pb.finish_with_message(format!("Failed to download for {}-{}", os, arch));
@@ -560,10 +556,6 @@ async fn main() -> Result<()> {
                                         Ok(_) => info!("Successfully downloaded Zed Remote Server {} for {}-{} to {:?}", version.version, os, arch, file_path),
                                         Err(e) => error!("Failed to write release file for {}-{}: {}", os, arch, e),
                                     }
-                                    
-                                    // For backward compatibility, also save the latest version info to a common file
-                                    let common_version_file = release_dir.join("latest-version.json");
-                                    std::fs::write(&common_version_file, serde_json::to_string_pretty(&version)?)?;
                                 },
                                 Err(e) => {
                                     pb.finish_with_message(format!("Failed to download for {}-{}", os, arch));

@@ -77,13 +77,7 @@ impl LocalServer {
                         }
                         
                         if !found_files {
-                            // Check for generic version file
-                            let generic_version = path.join("latest-version.json");
-                            if generic_version.exists() {
-                                info!("  Generic version file available");
-                            } else {
-                                info!("  No version files available yet");
-                            }
+                            info!("  No version files available yet");
                         }
                     }
                 }
@@ -240,20 +234,12 @@ async fn get_latest_version(
         // Determine the asset-specific directory
         let asset_dir = releases_dir.join(&asset);
         
-        // Try to find platform-specific version file first
+        // Try to find platform-specific version file
         let platform_version_file = asset_dir.join(format!("latest-version-{}-{}.json", os, arch));
         
         if platform_version_file.exists() {
             info!("Found platform-specific version file: {:?}", platform_version_file);
             return read_version_file(platform_version_file, os.clone(), arch.clone(), &asset);
-        }
-        
-        // Look for the generic latest version file as fallback
-        let version_file = asset_dir.join("latest-version.json");
-        
-        if version_file.exists() {
-            info!("Found generic version file: {:?}", version_file);
-            return read_version_file(version_file, os, arch, &asset);
         }
         
         // If we're in proxy mode and the file doesn't exist, proxy the request
