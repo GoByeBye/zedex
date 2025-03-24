@@ -537,9 +537,10 @@ async fn check_extension_updates(
                     let filtered_extensions = if min_wasm_api_version.is_some() || max_wasm_api_version.is_some() {
                         filtered_extensions.into_iter()
                             .filter(|ext| {
-                                // Skip extensions without a WASM API version
+                                // For extensions without a WASM API version, include them in the results
+                                // This matches the behavior of the official API
                                 if ext.wasm_api_version.is_none() {
-                                    return false;
+                                    return true;
                                 }
                                 
                                 let ext_version = ext.wasm_api_version.as_ref().unwrap();
