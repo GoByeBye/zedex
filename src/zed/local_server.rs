@@ -460,6 +460,9 @@ fn read_version_file(file_path: PathBuf, os: String, arch: String, asset: &str) 
                         }
                     }
                     
+                    // Replace URL with configured domain
+                    version.url = replace_url_with_domain(&version.url, &data.config.host);
+                    
                     HttpResponse::Ok()
                         .content_type("application/json")
                         .json(version)
@@ -495,9 +498,21 @@ async fn proxy_version_request(os: String, arch: String, asset: String) -> HttpR
                 Ok(response) => {
                     match response.bytes().await {
                         Ok(bytes) => {
+                            let mut version: Version = match serde_json::from_slice(&bytes) {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    error!("Error parsing proxied response: {}", e);
+                                    return HttpResponse::InternalServerError()
+                                        .body(format!("Error parsing proxied response: {}", e));
+                                }
+                            };
+                            
+                            // Replace URL with configured domain
+                            version.url = replace_url_with_domain(&version.url, &data.config.host);
+                            
                             HttpResponse::Ok()
                                 .content_type("application/json")
-                                .body(bytes)
+                                .json(version)
                         },
                         Err(e) => {
                             error!("Error reading proxied response: {}", e);
@@ -539,7 +554,7 @@ async fn proxy_api_request(
     }
     
     // Don't proxy if not in proxy mode
-    if !data.config.proxy_mode {
+    if (!data.config.proxy_mode) {
         warn!("Rejecting proxy request in local mode: {}", path_str);
         return HttpResponse::NotFound().body(format!("API path not found locally: {}", path_str));
     }
@@ -864,7 +879,10 @@ async fn proxy_download_request(extension_id: String) -> HttpResponse {
                         }
                     }
                     
-                    builder.body(bytes)
+                    // Replace URL with configured domain
+                    let modified_bytes = replace_url_with_domain(&String::from_utf8_lossy(&bytes), &data.config.host).into_bytes();
+                    
+                    builder.body(modified_bytes)
                 },
                 Err(e) => {
                     error!("Failed to get response body from proxy request: {}", e);
@@ -877,4 +895,17 @@ async fn proxy_download_request(extension_id: String) -> HttpResponse {
             HttpResponse::InternalServerError().body(format!("Proxy error: {}", e))
         }
     }
+}
+
+/// Replace the URL with the configured domain
+fn replace_url_with_domain(url: &str, domain: &str) -> String {
+    let parsed_url = match url::Url::parse(url) {
+        Ok(parsed) => parsed,
+        Err(_) => return url.to_string(),
+    };
+    
+    let mut new_url = parsed_url.clone();
+    new_url.set_host(Some(domain)).unwrap_or(());
+    
+    new_url.to_string()
 }
