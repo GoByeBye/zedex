@@ -318,7 +318,7 @@ async fn main() -> Result<()> {
                 
                 // Load or create the version tracker
                 let version_tracker_file = output_dir.join("version_tracker.json");
-                let mut version_tracker = if version_tracker_file.exists() {
+                let version_tracker = if version_tracker_file.exists() {
                     info!("Loading version tracker from {:?}", version_tracker_file);
                     let content = std::fs::read_to_string(&version_tracker_file)?;
                     serde_json::from_str(&content).unwrap_or_else(|_| zed::ExtensionVersionTracker::new())

@@ -67,7 +67,7 @@ impl LocalServer {
                                     .and_then(|n| n.to_str())
                                     .map(|s| s.starts_with("latest-version-"))
                                     .unwrap_or(false) {
-                                    if !found_files {
+                                    if (!found_files) {
                                         info!("  Platform-specific version files:");
                                         found_files = true;
                                     }
@@ -296,7 +296,7 @@ async fn download_extension(
             if data.config.proxy_mode {
                 error!("Extension file not found, proxying: {}", id);
                 // In proxy mode, forward the request to Zed API
-                proxy_download_request(id).await
+                proxy_download_request(id, data).await
             } else {
                 error!("Extension file not found: {}", id);
                 HttpResponse::NotFound().body(format!("Extension archive not found: {}", e))
@@ -394,12 +394,12 @@ async fn get_latest_version(
         
         if platform_version_file.exists() {
             info!("Found platform-specific version file: {:?}", platform_version_file);
-            return read_version_file(platform_version_file, os.clone(), arch.clone(), &asset);
+            return read_version_file(platform_version_file, os.clone(), arch.clone(), &asset, data);
         }
         
         // If we're in proxy mode and the file doesn't exist, proxy the request
         if data.config.proxy_mode {
-            return proxy_version_request(os, arch, asset).await;
+            return proxy_version_request(os, arch, asset, data).await;
         }
         
         HttpResponse::NotFound()
@@ -413,7 +413,7 @@ async fn get_latest_version(
 }
 
 // Helper function to read and parse a version file, replacing URLs with local ones if needed
-fn read_version_file(file_path: PathBuf, os: String, arch: String, asset: &str) -> HttpResponse {
+fn read_version_file(file_path: PathBuf, os: String, arch: String, asset: &str, data: &ServerData) -> HttpResponse {
     match fs::read_to_string(&file_path) {
         Ok(content) => {
             match serde_json::from_str::<Version>(&content) {
@@ -485,7 +485,7 @@ fn read_version_file(file_path: PathBuf, os: String, arch: String, asset: &str) 
 }
 
 // Proxy a request for the latest version to zed.dev
-async fn proxy_version_request(os: String, arch: String, asset: String) -> HttpResponse {
+async fn proxy_version_request(os: String, arch: String, asset: String, data: &ServerData) -> HttpResponse {
     debug!("Proxying version request for {}-{}-{} to zed.dev", asset, os, arch);
     
     let client = reqwest::Client::new();
@@ -554,7 +554,7 @@ async fn proxy_api_request(
     }
     
     // Don't proxy if not in proxy mode
-    if (!data.config.proxy_mode) {
+    if !data.config.proxy_mode {
         warn!("Rejecting proxy request in local mode: {}", path_str);
         return HttpResponse::NotFound().body(format!("API path not found locally: {}", path_str));
     }
@@ -705,7 +705,7 @@ async fn check_extension_updates(
             
             // If we're in proxy mode, try to proxy the request to zed.dev
             if data.config.proxy_mode {
-                return proxy_extensions_updates(query).await;
+                return proxy_extensions_updates(query, data).await;
             }
             
             HttpResponse::NotFound().body(format!("Extensions file not found: {}", e))
@@ -716,6 +716,7 @@ async fn check_extension_updates(
 // Proxy a request for extension updates to zed.dev
 async fn proxy_extensions_updates(
     query: web::Query<std::collections::HashMap<String, String>>,
+    data: &ServerData
 ) -> HttpResponse {
     debug!("Proxying extension updates request to api.zed.dev");
     
@@ -858,7 +859,7 @@ async fn proxy_extension_versions(extension_id: String) -> HttpResponse {
 }
 
 /// Proxy extension download request to Zed's API
-async fn proxy_download_request(extension_id: String) -> HttpResponse {
+async fn proxy_download_request(extension_id: String, data: web::Data<ServerData>) -> HttpResponse {
     let url = format!("https://api.zed.dev/extensions/{}/download?min_schema_version=0&max_schema_version=100&min_wasm_api_version=0.0.0&max_wasm_api_version=100.0.0", extension_id);
     debug!("Proxying extension download request to: {}", url);
     
