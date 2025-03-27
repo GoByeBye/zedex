@@ -171,7 +171,7 @@ impl Client {
             return Err(ZedError::PlatformNotSupported("Windows is not yet supported by Zed. Currently, Zed is only available for macOS and Linux.".to_string()).into());
         }
         
-        let url = format!("{}/api/releases/latest?asset={}&os={}&arch={}", self.host, asset, os, arch);
+        let url = format!("{}/api/releases/latest?asset={}&os={}&arch={}", self.api_host, asset, os, arch);
         debug!("Fetching latest version information from URL: {}", url);
         
         let response = self.http_client
