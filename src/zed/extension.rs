@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Represents a Zed extension with its metadata
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -21,6 +22,48 @@ pub struct Extension {
     pub download_count: i32,
     #[serde(default)]
     pub provides: Vec<String>,
+}
+
+/// Tracker for extension versions
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ExtensionVersionTracker {
+    pub extensions: HashMap<String, String>, // Maps extension id to latest version
+}
+
+/// Collection of extension versions
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ExtensionVersions {
+    pub versions: Vec<Extension>,
+}
+
+impl ExtensionVersionTracker {
+    /// Create a new empty version tracker
+    pub fn new() -> Self {
+        Self {
+            extensions: HashMap::new(),
+        }
+    }
+
+    /// Add or update an extension version
+    pub fn update_extension(&mut self, extension: &Extension) {
+        self.extensions.insert(extension.id.clone(), extension.version.clone());
+    }
+
+    /// Check if the tracker contains an extension with the given version
+    pub fn has_version(&self, id: &str, version: &str) -> bool {
+        match self.extensions.get(id) {
+            Some(tracked_version) => tracked_version == version,
+            None => false,
+        }
+    }
+
+    /// Check if the tracker has a newer version than the one provided
+    pub fn has_newer_version(&self, extension: &Extension) -> bool {
+        match self.extensions.get(&extension.id) {
+            Some(tracked_version) => tracked_version != &extension.version,
+            None => false,
+        }
+    }
 }
 
 impl Extension {

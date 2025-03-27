@@ -3,7 +3,7 @@ mod error;
 mod version;
 mod local_server;
 
-pub use extension::{Extensions, WrappedExtensions};
+pub use extension::{Extensions, WrappedExtensions, ExtensionVersionTracker};
 pub use extension::extensions_utils;
 pub use version::Version;
 pub use local_server::{LocalServer, ServerConfig};
@@ -227,6 +227,74 @@ impl Client {
         }
         
         debug!("Downloaded {} bytes", bytes.len());
+        Ok(bytes)
+    }
+
+    /// Get all versions of a specific extension
+    pub async fn get_extension_versions(&self, extension_id: &str) -> Result<Extensions> {
+        let url = format!("{}/extensions/{}", self.api_host, extension_id);
+        
+        debug!("Fetching all versions for extension {} from URL: {}", extension_id, url);
+        
+        let response = self.http_client
+            .get(&url)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let wrapped: WrappedExtensions = response.json().await?;
+        Ok(wrapped.data)
+    }
+
+    /// Download a specific version of an extension archive with progress reporting
+    pub async fn download_extension_version_with_progress(
+        &self, 
+        extension_id: &str,
+        version: &str,
+        progress_callback: impl Fn(u64, u64) + 'static
+    ) -> Result<Vec<u8>> {
+        let url = format!(
+            "{}/extensions/{}/{}/download",
+            self.api_host, extension_id, version
+        );
+        
+        debug!("Requesting specific extension version from URL: {}", url);
+        
+        let response = match self.http_client
+            .get(&url)
+            .send()
+            .await {
+                Ok(resp) => {
+                    debug!("Received response with status: {}", resp.status());
+                    match resp.error_for_status() {
+                        Ok(r) => r,
+                        Err(e) => {
+                            error!("Error status from response: {}", e);
+                            return Err(anyhow::anyhow!("Request failed: {}", e));
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("Error sending request: {}", e);
+                    return Err(anyhow::anyhow!("Request failed: {}", e));
+                }
+            };
+            
+        let total_size = response.content_length().unwrap_or(0);
+        let mut downloaded: u64 = 0;
+        let mut bytes = Vec::new();
+        
+        let mut stream = response.bytes_stream();
+        use futures_util::StreamExt;
+        
+        while let Some(item) = stream.next().await {
+            let chunk = item?;
+            downloaded += chunk.len() as u64;
+            bytes.extend_from_slice(&chunk);
+            progress_callback(downloaded, total_size);
+        }
+        
+        debug!("Downloaded {} bytes for extension {} version {}", bytes.len(), extension_id, version);
         Ok(bytes)
     }
 } 

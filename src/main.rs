@@ -8,6 +8,8 @@ use env_logger::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::Arc;
 use std::io::Write;
+use std::time::Duration;
+use std::fs;
 
 #[derive(Parser)]
 #[clap(author, version, about = "Zed Extension Mirror")]
@@ -91,6 +93,14 @@ enum GetTarget {
         /// Use fully asynchronous downloads without throttling (faster but may trigger rate limiting)
         #[clap(long)]
         async_mode: bool,
+
+        /// Whether to download all versions of each extension
+        #[clap(long)]
+        all_versions: bool,
+
+        /// Rate limit between API requests in seconds (to avoid overwhelming the server)
+        #[clap(long, default_value = "10")]
+        rate_limit: u64,
     },
 }
 
@@ -192,44 +202,82 @@ async fn main() -> Result<()> {
                 let client = zed::Client::new()
                     .with_extensions_local_dir(output_dir.to_string_lossy().to_string());
                 
+                // Get the extension index to get metadata for the extensions
+                let extensions_file = output_dir.join("extensions.json");
+                let extensions = if extensions_file.exists() {
+                    info!("Loading extension index from {:?}", extensions_file);
+                    let content = std::fs::read_to_string(&extensions_file)?;
+                    let wrapped: zed::WrappedExtensions = serde_json::from_str(&content)?;
+                    wrapped.data
+                } else {
+                    info!("Extension index not found. Fetching from API...");
+                    let extensions = client.get_extensions_index().await?;
+                    info!("Found {} extensions", extensions.len());
+                    
+                    // Save extensions to file
+                    let wrapped = zed::WrappedExtensions { data: extensions.clone() };
+                    let json = serde_json::to_string_pretty(&wrapped)?;
+                    std::fs::write(&extensions_file, json)?;
+                    info!("Saved extension index to {:?}", extensions_file);
+                    extensions
+                };
+                
                 // Download each extension with a progress bar
                 let futures = ids.iter().map(|id| {
                     let id = id.clone();
                     let client = client.clone();
                     let output_dir = output_dir.clone();
+                    let extensions = extensions.clone();
                     
                     async move {
-                        info!("Downloading extension: {}", id);
+                        // Find the extension in the index to get its metadata
+                        let extension = extensions.iter().find(|e| e.id == id);
                         
-                        // Create a progress bar for this download
-                        let pb = Arc::new(ProgressBar::new(0));
-                        pb.set_style(ProgressStyle::default_bar()
-                            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                            .unwrap()
-                            .progress_chars("#>-"));
-                        
-                        let pb_clone = pb.clone();
-                        match client.download_extension_archive_default_with_progress(&id, 
-                            move |downloaded, total| {
-                                pb_clone.set_length(total);
-                                pb_clone.set_position(downloaded);
-                            }).await {
-                            Ok(bytes) => {
-                                pb.finish_with_message(format!("Downloaded {}", id));
-                                let file_path = output_dir.join(format!("{}.tar.gz", id));
-                                match std::fs::write(&file_path, bytes) {
-                                    Ok(_) => info!("Successfully downloaded extension: {} to {:?}", id, file_path),
-                                    Err(e) => error!("Failed to write extension file {}: {}", id, e),
+                        if let Some(extension) = extension {
+                            info!("Downloading extension: {} (version {})", id, extension.version);
+                            
+                            // Create extension-specific directory
+                            let ext_dir = output_dir.join(&id);
+                            if !ext_dir.exists() {
+                                if let Err(e) = fs::create_dir_all(&ext_dir) {
+                                    error!("Failed to create directory {:?}: {}", ext_dir, e);
+                                    return;
                                 }
-                            },
-                            Err(e) => {
-                                pb.finish_with_message(format!("Failed to download {}", id));
-                                if let Some(err) = e.downcast_ref::<reqwest::Error>() {
-                                    error!("Failed to download extension {}: {}", id, err);
-                                } else {
-                                    error!("Failed to download extension {}: {}", id, e);
-                                }
-                            },
+                            }
+                            
+                            // Create a progress bar for this download
+                            let pb = Arc::new(ProgressBar::new(0));
+                            pb.set_style(ProgressStyle::default_bar()
+                                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+                                .unwrap()
+                                .progress_chars("#>-"));
+                            
+                            let pb_clone = pb.clone();
+                            let file_path = ext_dir.join(format!("{}.tgz", id));
+                            
+                            match client.download_extension_version_with_progress(&id, &extension.version, 
+                                move |downloaded, total| {
+                                    pb_clone.set_length(total);
+                                    pb_clone.set_position(downloaded);
+                                }).await {
+                                Ok(bytes) => {
+                                    pb.finish_with_message(format!("Downloaded {}", id));
+                                    match std::fs::write(&file_path, bytes) {
+                                        Ok(_) => info!("Successfully downloaded extension: {} to {:?}", id, file_path),
+                                        Err(e) => error!("Failed to write extension file {}: {}", id, e),
+                                    }
+                                },
+                                Err(e) => {
+                                    pb.finish_with_message(format!("Failed to download {}", id));
+                                    if let Some(err) = e.downcast_ref::<reqwest::Error>() {
+                                        error!("Failed to download extension {}: {}", id, err);
+                                    } else {
+                                        error!("Failed to download extension {}: {}", id, e);
+                                    }
+                                },
+                            }
+                        } else {
+                            error!("Extension {} not found in index", id);
                         }
                     }
                 });
@@ -237,7 +285,7 @@ async fn main() -> Result<()> {
                 // Wait for all downloads to complete
                 futures_util::future::join_all(futures).await;
             },
-            GetTarget::AllExtensions { output_dir, async_mode } => {
+            GetTarget::AllExtensions { output_dir, async_mode, all_versions, rate_limit } => {
                 // Resolve output directory from root_dir if not specified
                 let output_dir = output_dir.unwrap_or_else(|| root_dir.clone());
                 
@@ -268,7 +316,19 @@ async fn main() -> Result<()> {
                     extensions
                 };
                 
-                info!("Downloading {} extensions...", extensions.len());
+                // Load or create the version tracker
+                let version_tracker_file = output_dir.join("version_tracker.json");
+                let mut version_tracker = if version_tracker_file.exists() {
+                    info!("Loading version tracker from {:?}", version_tracker_file);
+                    let content = std::fs::read_to_string(&version_tracker_file)?;
+                    serde_json::from_str(&content).unwrap_or_else(|_| zed::ExtensionVersionTracker::new())
+                } else {
+                    zed::ExtensionVersionTracker::new()
+                };
+                
+                info!("Downloading {} extensions{}...", 
+                    extensions.len(), 
+                    if all_versions { " (all versions)" } else { " (latest version only)" });
                 
                 if async_mode {
                     // Fully asynchronous mode - no throttling
@@ -279,47 +339,131 @@ async fn main() -> Result<()> {
                         let id = extension.id.clone();
                         let client = client.clone();
                         let output_dir = output_dir.clone();
+                        let all_versions = all_versions;
+                        let rate_limit = rate_limit;
+                        let mut version_tracker = version_tracker.clone();
+                        let extension_clone = extension.clone();
                         
                         async move {
-                            let file_path = output_dir.join(format!("{}.tar.gz", id));
-                            
-                            // Skip if already downloaded
-                            if file_path.exists() {
-                                debug!("Extension {} already downloaded, skipping", id);
-                                return;
+                            // Create extension-specific directory
+                            let ext_dir = output_dir.join(&id);
+                            if !ext_dir.exists() {
+                                if let Err(e) = fs::create_dir_all(&ext_dir) {
+                                    error!("Failed to create directory {:?}: {}", ext_dir, e);
+                                    return Ok(());
+                                }
                             }
                             
-                            info!("Downloading extension: {}", id);
-                            
-                            // Create a progress bar for this download
-                            let pb = Arc::new(ProgressBar::new(0));
-                            pb.set_style(ProgressStyle::default_bar()
-                                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                                .unwrap()
-                                .progress_chars("#>-"));
-                            
-                            let pb_clone = pb.clone();
-                            match client.download_extension_archive_default_with_progress(&id, 
-                                move |downloaded, total| {
-                                    pb_clone.set_length(total);
-                                    pb_clone.set_position(downloaded);
-                                }).await {
-                                Ok(bytes) => {
-                                    pb.finish_with_message(format!("Downloaded {}", id));
-                                    match std::fs::write(&file_path, bytes) {
-                                        Ok(_) => info!("Successfully downloaded extension: {} to {:?}", id, file_path),
-                                        Err(e) => error!("Failed to write extension file {}: {}", id, e),
+                            if all_versions {
+                                // Fetch all versions of this extension
+                                let versions = client.get_extension_versions(&id).await?;
+                                
+                                // Save versions metadata
+                                let versions_file = ext_dir.join("versions.json");
+                                let versions_json = serde_json::to_string_pretty(&zed::WrappedExtensions { data: versions.clone() })?;
+                                fs::write(&versions_file, versions_json)?;
+                                
+                                // Download each version
+                                for version in versions.iter() {
+                                    let file_path = ext_dir.join(format!("{}-{}.tgz", id, version.version));
+                                    
+                                    // Skip if already downloaded
+                                    if file_path.exists() {
+                                        debug!("Extension {} version {} already downloaded, skipping", id, version.version);
+                                        // Update version tracker
+                                        version_tracker.update_extension(version);
+                                        continue;
                                     }
-                                },
-                                Err(e) => {
-                                    pb.finish_with_message(format!("Failed to download {}", id));
-                                    if let Some(err) = e.downcast_ref::<reqwest::Error>() {
-                                        error!("Failed to download extension {}: {}", id, err);
-                                    } else {
-                                        error!("Failed to download extension {}: {}", id, e);
+                                    
+                                    info!("Downloading extension: {} version {}", id, version.version);
+                                    
+                                    // Create a progress bar for this download
+                                    let pb = Arc::new(ProgressBar::new(0));
+                                    pb.set_style(ProgressStyle::default_bar()
+                                        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+                                        .unwrap()
+                                        .progress_chars("#>-"));
+                                    
+                                    let pb_clone = pb.clone();
+                                    match client.download_extension_version_with_progress(&id, &version.version, 
+                                        move |downloaded, total| {
+                                            pb_clone.set_length(total);
+                                            pb_clone.set_position(downloaded);
+                                        }).await {
+                                        Ok(bytes) => {
+                                            pb.finish_with_message(format!("Downloaded {} v{}", id, version.version));
+                                            match std::fs::write(&file_path, bytes) {
+                                                Ok(_) => {
+                                                    info!("Successfully downloaded extension: {} version {} to {:?}", id, version.version, file_path);
+                                                    // Update version tracker
+                                                    version_tracker.update_extension(version);
+                                                },
+                                                Err(e) => error!("Failed to write extension file {}: {}", id, e),
+                                            }
+                                        },
+                                        Err(e) => {
+                                            pb.finish_with_message(format!("Failed to download {} v{}", id, version.version));
+                                            if let Some(err) = e.downcast_ref::<reqwest::Error>() {
+                                                error!("Failed to download extension {} version {}: {}", id, version.version, err);
+                                            } else {
+                                                error!("Failed to download extension {} version {}: {}", id, version.version, e);
+                                            }
+                                        },
                                     }
-                                },
+                                    
+                                    // Apply rate limiting between downloads
+                                    if rate_limit > 0 {
+                                        tokio::time::sleep(Duration::from_secs(rate_limit)).await;
+                                    }
+                                }
+                            } else {
+                                // Download only the latest version
+                                let file_path = ext_dir.join(format!("{}.tgz", id));
+                                
+                                // Skip if already downloaded and version hasn't changed
+                                if file_path.exists() && !version_tracker.has_newer_version(&extension_clone) {
+                                    debug!("Extension {} latest version already downloaded, skipping", id);
+                                    return Ok(());
+                                }
+                                
+                                info!("Downloading extension: {}", id);
+                                
+                                // Create a progress bar for this download
+                                let pb = Arc::new(ProgressBar::new(0));
+                                pb.set_style(ProgressStyle::default_bar()
+                                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+                                    .unwrap()
+                                    .progress_chars("#>-"));
+                                
+                                let pb_clone = pb.clone();
+                                match client.download_extension_version_with_progress(&id, &extension_clone.version, 
+                                    move |downloaded, total| {
+                                        pb_clone.set_length(total);
+                                        pb_clone.set_position(downloaded);
+                                    }).await {
+                                    Ok(bytes) => {
+                                        pb.finish_with_message(format!("Downloaded {}", id));
+                                        match std::fs::write(&file_path, bytes) {
+                                            Ok(_) => {
+                                                info!("Successfully downloaded extension: {} to {:?}", id, file_path);
+                                                // Update version tracker
+                                                version_tracker.update_extension(&extension_clone);
+                                            },
+                                            Err(e) => error!("Failed to write extension file {}: {}", id, e),
+                                        }
+                                    },
+                                    Err(e) => {
+                                        pb.finish_with_message(format!("Failed to download {}", id));
+                                        if let Some(err) = e.downcast_ref::<reqwest::Error>() {
+                                            error!("Failed to download extension {}: {}", id, err);
+                                        } else {
+                                            error!("Failed to download extension {}: {}", id, e);
+                                        }
+                                    },
+                                }
                             }
+                            
+                            Ok::<(), anyhow::Error>(())
                         }
                     });
                     
@@ -341,50 +485,134 @@ async fn main() -> Result<()> {
                         let client = client.clone();
                         let output_dir = output_dir.clone();
                         let semaphore = semaphore.clone();
+                        let extension_clone = extension.clone();
+                        let all_versions = all_versions;
+                        let rate_limit = rate_limit;
+                        let mut version_tracker = version_tracker.clone();
                         
                         let handle = tokio::spawn(async move {
                             // Acquire a permit from the semaphore (this limits concurrency)
                             let _permit = semaphore.acquire().await.unwrap();
                             
-                            let file_path = output_dir.join(format!("{}.tar.gz", id));
-                            
-                            // Skip if already downloaded
-                            if file_path.exists() {
-                                debug!("Extension {} already downloaded, skipping", id);
-                                return;
+                            // Create extension-specific directory
+                            let ext_dir = output_dir.join(&id);
+                            if !ext_dir.exists() {
+                                if let Err(e) = fs::create_dir_all(&ext_dir) {
+                                    error!("Failed to create directory {:?}: {}", ext_dir, e);
+                                    return Ok(());
+                                }
                             }
                             
-                            info!("Downloading extension: {}", id);
-                            
-                            // Create a progress bar for this download
-                            let pb = Arc::new(ProgressBar::new(0));
-                            pb.set_style(ProgressStyle::default_bar()
-                                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                                .unwrap()
-                                .progress_chars("#>-"));
-                            
-                            let pb_clone = pb.clone();
-                            match client.download_extension_archive_default_with_progress(&id, 
-                                move |downloaded, total| {
-                                    pb_clone.set_length(total);
-                                    pb_clone.set_position(downloaded);
-                                }).await {
-                                Ok(bytes) => {
-                                    pb.finish_with_message(format!("Downloaded {}", id));
-                                    match std::fs::write(&file_path, bytes) {
-                                        Ok(_) => info!("Successfully downloaded extension: {} to {:?}", id, file_path),
-                                        Err(e) => error!("Failed to write extension file {}: {}", id, e),
+                            if all_versions {
+                                // Fetch all versions of this extension
+                                let versions = client.get_extension_versions(&id).await?;
+                                
+                                // Save versions metadata
+                                let versions_file = ext_dir.join("versions.json");
+                                let versions_json = serde_json::to_string_pretty(&zed::WrappedExtensions { data: versions.clone() })?;
+                                fs::write(&versions_file, versions_json)?;
+                                
+                                // Download each version
+                                for version in versions.iter() {
+                                    let file_path = ext_dir.join(format!("{}-{}.tgz", id, version.version));
+                                    
+                                    // Skip if already downloaded
+                                    if file_path.exists() {
+                                        debug!("Extension {} version {} already downloaded, skipping", id, version.version);
+                                        // Update version tracker
+                                        version_tracker.update_extension(version);
+                                        continue;
                                     }
-                                },
-                                Err(e) => {
-                                    pb.finish_with_message(format!("Failed to download {}", id));
-                                    if let Some(err) = e.downcast_ref::<reqwest::Error>() {
-                                        error!("Failed to download extension {}: {}", id, err);
-                                    } else {
-                                        error!("Failed to download extension {}: {}", id, e);
+                                    
+                                    info!("Downloading extension: {} version {}", id, version.version);
+                                    
+                                    // Create a progress bar for this download
+                                    let pb = Arc::new(ProgressBar::new(0));
+                                    pb.set_style(ProgressStyle::default_bar()
+                                        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+                                        .unwrap()
+                                        .progress_chars("#>-"));
+                                    
+                                    let pb_clone = pb.clone();
+                                    match client.download_extension_version_with_progress(&id, &version.version, 
+                                        move |downloaded, total| {
+                                            pb_clone.set_length(total);
+                                            pb_clone.set_position(downloaded);
+                                        }).await {
+                                        Ok(bytes) => {
+                                            pb.finish_with_message(format!("Downloaded {} v{}", id, version.version));
+                                            match std::fs::write(&file_path, bytes) {
+                                                Ok(_) => {
+                                                    info!("Successfully downloaded extension: {} version {} to {:?}", id, version.version, file_path);
+                                                    // Update version tracker
+                                                    version_tracker.update_extension(version);
+                                                },
+                                                Err(e) => error!("Failed to write extension file {}: {}", id, e),
+                                            }
+                                        },
+                                        Err(e) => {
+                                            pb.finish_with_message(format!("Failed to download {} v{}", id, version.version));
+                                            if let Some(err) = e.downcast_ref::<reqwest::Error>() {
+                                                error!("Failed to download extension {} version {}: {}", id, version.version, err);
+                                            } else {
+                                                error!("Failed to download extension {} version {}: {}", id, version.version, e);
+                                            }
+                                        },
                                     }
-                                },
+                                    
+                                    // Apply rate limiting between downloads
+                                    if rate_limit > 0 {
+                                        tokio::time::sleep(Duration::from_secs(rate_limit)).await;
+                                    }
+                                }
+                            } else {
+                                // Download only the latest version
+                                let file_path = ext_dir.join(format!("{}.tgz", id));
+                                
+                                // Skip if already downloaded and version hasn't changed
+                                if file_path.exists() && !version_tracker.has_newer_version(&extension_clone) {
+                                    debug!("Extension {} latest version already downloaded, skipping", id);
+                                    return Ok(());
+                                }
+                                
+                                info!("Downloading extension: {}", id);
+                                
+                                // Create a progress bar for this download
+                                let pb = Arc::new(ProgressBar::new(0));
+                                pb.set_style(ProgressStyle::default_bar()
+                                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+                                    .unwrap()
+                                    .progress_chars("#>-"));
+                                
+                                let pb_clone = pb.clone();
+                                match client.download_extension_version_with_progress(&id, &extension_clone.version, 
+                                    move |downloaded, total| {
+                                        pb_clone.set_length(total);
+                                        pb_clone.set_position(downloaded);
+                                    }).await {
+                                    Ok(bytes) => {
+                                        pb.finish_with_message(format!("Downloaded {}", id));
+                                        match std::fs::write(&file_path, bytes) {
+                                            Ok(_) => {
+                                                info!("Successfully downloaded extension: {} to {:?}", id, file_path);
+                                                // Update version tracker
+                                                version_tracker.update_extension(&extension_clone);
+                                            },
+                                            Err(e) => error!("Failed to write extension file {}: {}", id, e),
+                                        }
+                                    },
+                                    Err(e) => {
+                                        pb.finish_with_message(format!("Failed to download {}", id));
+                                        if let Some(err) = e.downcast_ref::<reqwest::Error>() {
+                                            error!("Failed to download extension {}: {}", id, err);
+                                        } else {
+                                            error!("Failed to download extension {}: {}", id, e);
+                                        }
+                                    },
+                                }
                             }
+                            
+                            Ok::<(), anyhow::Error>(())
                         });
                         
                         handles.push(handle);
@@ -392,9 +620,13 @@ async fn main() -> Result<()> {
                     
                     // Wait for all downloads to complete
                     for handle in handles {
-                        handle.await?;
+                        handle.await??;
                     }
                 }
+                
+                // Save the updated version tracker
+                let version_tracker_json = serde_json::to_string_pretty(&version_tracker)?;
+                fs::write(&version_tracker_file, version_tracker_json)?;
                 
                 info!("All extensions downloaded to {:?}", output_dir);
             },

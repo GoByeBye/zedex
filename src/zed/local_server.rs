@@ -101,7 +101,8 @@ impl LocalServer {
                 .service(web::resource("/extensions").to(get_extensions_index))
                 .service(web::resource("/extensions/updates").to(check_extension_updates))
                 .service(web::resource("/extensions/{id}/download").to(download_extension))
-                .service(web::resource("/extensions/{id}/{version}/download").to(download_extension_with_version));
+                .service(web::resource("/extensions/{id}/{version}/download").to(download_extension_with_version))
+                .service(web::resource("/extensions/{id}").to(get_extension_versions));
             
             // Add the /api/releases/latest endpoint with query parameters
             app = app.service(
@@ -271,9 +272,19 @@ async fn download_extension(
     data: web::Data<ServerData>
 ) -> impl Responder {
     let id = path.into_inner();
-    let file_path = data.config.extensions_dir.join(format!("{}.tar.gz", id));
     
-    debug!("Attempting to serve extension archive for id: {}", id);
+    // First, try to find the extension in its own directory (new structure)
+    let ext_dir = data.config.extensions_dir.join(&id);
+    let file_path = if ext_dir.exists() {
+        // Look for the latest version in the extension directory
+        // The file should be named "{id}.tgz" for the latest version
+        ext_dir.join(format!("{}.tgz", id))
+    } else {
+        // Fall back to the old structure (flat directory with all extensions)
+        data.config.extensions_dir.join(format!("{}.tar.gz", id))
+    };
+    
+    debug!("Attempting to serve extension archive for id: {} from {:?}", id, file_path);
     match fs::read(&file_path) {
         Ok(bytes) => {
             info!("Successfully served extension archive: {}", id);
@@ -282,8 +293,14 @@ async fn download_extension(
                 .body(bytes)
         },
         Err(e) => {
-            error!("Error reading extension archive {}: {}", id, e);
-            HttpResponse::NotFound().body(format!("Extension archive not found: {}", e))
+            if data.config.proxy_mode {
+                error!("Extension file not found, proxying: {}", id);
+                // In proxy mode, forward the request to Zed API
+                proxy_download_request(id).await
+            } else {
+                error!("Extension file not found: {}", id);
+                HttpResponse::NotFound().body(format!("Extension archive not found: {}", e))
+            }
         }
     }
 }
@@ -294,8 +311,67 @@ async fn download_extension_with_version(
 ) -> impl Responder {
     let (id, version) = path.into_inner();
     debug!("Requested extension {} with version {}", id, version);
-    // Version is ignored for now, since we only keep the latest version
-    download_extension(web::Path::from(id), data).await
+    
+    // Check for the extension in its own directory with the specified version
+    let ext_dir = data.config.extensions_dir.join(&id);
+    let versioned_file_path = ext_dir.join(format!("{}-{}.tgz", id, version));
+    
+    debug!("Looking for versioned extension at {:?}", versioned_file_path);
+    match fs::read(&versioned_file_path) {
+        Ok(bytes) => {
+            info!("Successfully served extension archive: {} version {}", id, version);
+            HttpResponse::Ok()
+                .content_type("application/gzip")
+                .body(bytes)
+        },
+        Err(e) => {
+            if data.config.proxy_mode {
+                error!("Extension version file not found, proxying: {} version {}", id, version);
+                // In proxy mode, forward the request to Zed API with specific version
+                proxy_download_version_request(id, version).await
+            } else {
+                error!("Extension version file not found: {} version {}", id, version);
+                HttpResponse::NotFound().body(format!("Extension version archive not found: {}", e))
+            }
+        }
+    }
+}
+
+/// Proxy extension download request for a specific version to Zed's API
+async fn proxy_download_version_request(extension_id: String, version: String) -> HttpResponse {
+    let url = format!("https://api.zed.dev/extensions/{}/{}/download", extension_id, version);
+    debug!("Proxying versioned extension download request to: {}", url);
+    
+    let client = reqwest::Client::new();
+    match client.get(&url).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            
+            match resp.bytes().await {
+                Ok(bytes) => {
+                    let mut builder = HttpResponse::build(status);
+                    
+                    // Copy relevant headers
+                    for (key, value) in headers.iter() {
+                        if let Ok(header_value) = http::header::HeaderValue::from_bytes(value.as_bytes()) {
+                            builder.append_header((key.clone(), header_value));
+                        }
+                    }
+                    
+                    builder.body(bytes)
+                },
+                Err(e) => {
+                    error!("Failed to get response body from proxy request: {}", e);
+                    HttpResponse::InternalServerError().body(format!("Proxy error: {}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to proxy extension version download request: {}", e);
+            HttpResponse::InternalServerError().body(format!("Proxy error: {}", e))
+        }
+    }
 }
 
 async fn get_latest_version(
@@ -685,6 +761,120 @@ async fn proxy_extensions_updates(
             error!("Error proxying request: {}", e);
             HttpResponse::InternalServerError()
                 .body(format!("Error proxying request: {}", e))
+        }
+    }
+}
+
+/// Get all versions of a specific extension by ID
+async fn get_extension_versions(
+    path: web::Path<String>,
+    data: web::Data<ServerData>
+) -> impl Responder {
+    let id = path.into_inner();
+    let ext_dir = data.config.extensions_dir.join(&id);
+    let versions_file = ext_dir.join("versions.json");
+    
+    debug!("Attempting to serve versions for extension id: {}", id);
+    
+    if versions_file.exists() {
+        match fs::read_to_string(&versions_file) {
+            Ok(content) => {
+                match serde_json::from_str::<WrappedExtensions>(&content) {
+                    Ok(extensions) => {
+                        info!("Successfully served {} versions for extension: {}", extensions.data.len(), id);
+                        HttpResponse::Ok().json(extensions)
+                    },
+                    Err(e) => {
+                        error!("Error parsing versions.json for {}: {}", id, e);
+                        HttpResponse::InternalServerError().body(format!("Error parsing versions file: {}", e))
+                    }
+                }
+            },
+            Err(e) => {
+                error!("Error reading versions.json for {}: {}", id, e);
+                HttpResponse::InternalServerError().body(format!("Error reading versions file: {}", e))
+            }
+        }
+    } else if data.config.proxy_mode {
+        // In proxy mode, forward the request to Zed's API
+        info!("Extension versions file not found for {}. Proxying request in proxy mode.", id);
+        proxy_extension_versions(id).await
+    } else {
+        error!("Extension versions file not found for {}: {:?}", id, versions_file);
+        HttpResponse::NotFound().body(format!("Extension versions not found for: {}", id))
+    }
+}
+
+/// Proxy request for extension versions to Zed's API
+async fn proxy_extension_versions(extension_id: String) -> HttpResponse {
+    let url = format!("https://api.zed.dev/extensions/{}", extension_id);
+    debug!("Proxying extension versions request to: {}", url);
+    
+    let client = reqwest::Client::new();
+    match client.get(&url).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            
+            match resp.bytes().await {
+                Ok(bytes) => {
+                    let mut builder = HttpResponse::build(status);
+                    
+                    // Copy relevant headers
+                    for (key, value) in headers.iter() {
+                        if let Ok(header_value) = http::header::HeaderValue::from_bytes(value.as_bytes()) {
+                            builder.append_header((key.clone(), header_value));
+                        }
+                    }
+                    
+                    builder.body(bytes)
+                },
+                Err(e) => {
+                    error!("Failed to get response body from proxy request: {}", e);
+                    HttpResponse::InternalServerError().body(format!("Proxy error: {}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to proxy extension versions request: {}", e);
+            HttpResponse::InternalServerError().body(format!("Proxy error: {}", e))
+        }
+    }
+}
+
+/// Proxy extension download request to Zed's API
+async fn proxy_download_request(extension_id: String) -> HttpResponse {
+    let url = format!("https://api.zed.dev/extensions/{}/download?min_schema_version=0&max_schema_version=100&min_wasm_api_version=0.0.0&max_wasm_api_version=100.0.0", extension_id);
+    debug!("Proxying extension download request to: {}", url);
+    
+    let client = reqwest::Client::new();
+    match client.get(&url).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            
+            match resp.bytes().await {
+                Ok(bytes) => {
+                    let mut builder = HttpResponse::build(status);
+                    
+                    // Copy relevant headers
+                    for (key, value) in headers.iter() {
+                        if let Ok(header_value) = http::header::HeaderValue::from_bytes(value.as_bytes()) {
+                            builder.append_header((key.clone(), header_value));
+                        }
+                    }
+                    
+                    builder.body(bytes)
+                },
+                Err(e) => {
+                    error!("Failed to get response body from proxy request: {}", e);
+                    HttpResponse::InternalServerError().body(format!("Proxy error: {}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to proxy extension download request: {}", e);
+            HttpResponse::InternalServerError().body(format!("Proxy error: {}", e))
         }
     }
 }
