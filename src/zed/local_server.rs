@@ -15,6 +15,7 @@ pub struct ServerConfig {
     pub extensions_dir: PathBuf,
     pub releases_dir: Option<PathBuf>,
     pub proxy_mode: bool,
+    pub domain: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -26,6 +27,7 @@ impl Default for ServerConfig {
             extensions_dir: root_dir.clone(),
             releases_dir: Some(root_dir.join("releases")),
             proxy_mode: false,
+            domain: None,
         }
     }
 }
@@ -394,7 +396,7 @@ async fn get_latest_version(
         
         if platform_version_file.exists() {
             info!("Found platform-specific version file: {:?}", platform_version_file);
-            return read_version_file(platform_version_file, os.clone(), arch.clone(), &asset);
+            return read_version_file(platform_version_file, os.clone(), arch.clone(), &asset, data.config.domain.as_ref());
         }
         
         // If we're in proxy mode and the file doesn't exist, proxy the request
@@ -413,7 +415,7 @@ async fn get_latest_version(
 }
 
 // Helper function to read and parse a version file, replacing URLs with local ones if needed
-fn read_version_file(file_path: PathBuf, os: String, arch: String, asset: &str) -> HttpResponse {
+fn read_version_file(file_path: PathBuf, os: String, arch: String, asset: &str, domain: Option<&str>) -> HttpResponse {
     match fs::read_to_string(&file_path) {
         Ok(content) => {
             match serde_json::from_str::<Version>(&content) {
@@ -434,8 +436,15 @@ fn read_version_file(file_path: PathBuf, os: String, arch: String, asset: &str) 
                         let local_path = format!("/releases/{}/{}-{}-{}-{}.gz", 
                             asset, asset, version_number, os, arch);
                         
-                        debug!("Using local file path: {}", local_path);
-                        version.url = local_path;
+                        // If domain is provided, prepend it to the local path
+                        let full_url = if let Some(domain) = domain {
+                            format!("{}{}", domain, local_path)
+                        } else {
+                            local_path
+                        };
+                        
+                        debug!("Using local file path: {}", full_url);
+                        version.url = full_url;
                     } else {
                         // If platform-specific file doesn't exist, check if we have any matching
                         // files that might work (for different platforms)

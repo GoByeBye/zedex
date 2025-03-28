@@ -65,6 +65,10 @@ enum Commands {
         /// Whether to proxy requests to zed.dev for missing content
         #[clap(long)]
         proxy_mode: bool,
+
+        /// Domain to use in URLs (e.g. http://localhost:2654)
+        #[clap(long)]
+        domain: Option<String>,
     },
 }
 
@@ -802,12 +806,13 @@ async fn main() -> Result<()> {
                 }
             },
         },
-        Commands::Serve { port, host, extensions_dir, releases_dir, proxy_mode } => {
+        Commands::Serve { port, host, extensions_dir, releases_dir, proxy_mode, domain } => {
             // Set up the server configuration
             let mut config = zed::ServerConfig::default();
             config.port = port;
             config.host = host;
             config.proxy_mode = proxy_mode;
+            config.domain = domain;
             
             // Set the extensions directory if provided, otherwise use the default
             if let Some(ext_dir) = extensions_dir {
