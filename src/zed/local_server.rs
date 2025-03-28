@@ -564,13 +564,13 @@ async fn proxy_api_request(
             // Try to find the file in the releases directory
             if let Some(releases_dir) = &data.config.releases_dir {
                 // First try the zed directory
-                let zed_path = releases_dir.join("zed").join(filename);
+                let zed_path = releases_dir.join("zed").join(format!("zed-{}-{}.gz", version, filename.replace(".tar.gz", "")));
                 if zed_path.exists() {
                     return serve_release_file(&zed_path);
                 }
                 
                 // Then try the zed-remote-server directory
-                let remote_server_path = releases_dir.join("zed-remote-server").join(filename);
+                let remote_server_path = releases_dir.join("zed-remote-server").join(format!("zed-remote-server-{}-{}.gz", version, filename.replace(".tar.gz", "")));
                 if remote_server_path.exists() {
                     return serve_release_file(&remote_server_path);
                 }
