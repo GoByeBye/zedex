@@ -553,13 +553,16 @@ async fn proxy_api_request(
         return HttpResponse::NotFound().body(format!("API path not found locally: {}", path_str));
     }
     
-    // Handle paths that start with api/releases/stable/
-    if path_str.starts_with("api/releases/stable/") {
+    // Handle paths that start with api/releases/stable/ or releases/stable/
+    if path_str.starts_with("api/releases/stable/") || path_str.starts_with("releases/stable/") {
+        // Remove the api/ prefix if present
+        let clean_path = path_str.trim_start_matches("api/");
+        
         // Split the path into components
-        let parts: Vec<&str> = path_str.split('/').collect();
-        if parts.len() >= 5 {
-            let version = parts[3];
-            let filename = parts[4];
+        let parts: Vec<&str> = clean_path.split('/').collect();
+        if parts.len() >= 4 {
+            let version = parts[2];
+            let filename = parts[3];
             
             // Try to find the file in the releases directory
             if let Some(releases_dir) = &data.config.releases_dir {
