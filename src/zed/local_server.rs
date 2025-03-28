@@ -557,8 +557,10 @@ async fn proxy_api_request(
     if data.config.releases_dir.is_some() && path_str.starts_with("releases/") && path_str != "releases/latest" {
         // Instead of returning 404, try to serve the file directly
         // The path will be something like "releases/stable/0.178.0/Zed.dmg"
+        // Remove any query parameters from the path
+        let clean_path = path_str.split('?').next().unwrap_or(&path_str);
         let file_path = data.config.releases_dir.as_ref().unwrap()
-            .join(path_str.trim_start_matches("releases/"));
+            .join(clean_path.trim_start_matches("releases/"));
         debug!("Attempting to serve release file from: {:?}", file_path);
         
         if file_path.exists() {
@@ -571,6 +573,7 @@ async fn proxy_api_request(
                         Some("exe") => "application/vnd.microsoft.portable-executable",
                         Some("AppImage") => "application/x-executable",
                         Some("json") => "application/json",
+                        Some("gz") => "application/gzip",
                         _ => "application/octet-stream",
                     };
                     
