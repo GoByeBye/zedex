@@ -553,6 +553,31 @@ async fn proxy_api_request(
         return HttpResponse::NotFound().body(format!("API path not found locally: {}", path_str));
     }
     
+    // Handle paths that start with api/releases/stable/
+    if path_str.starts_with("api/releases/stable/") {
+        // Split the path into components
+        let parts: Vec<&str> = path_str.split('/').collect();
+        if parts.len() >= 5 {
+            let version = parts[3];
+            let filename = parts[4];
+            
+            // Try to find the file in the releases directory
+            if let Some(releases_dir) = &data.config.releases_dir {
+                // First try the zed directory
+                let zed_path = releases_dir.join("zed").join(filename);
+                if zed_path.exists() {
+                    return serve_release_file(&zed_path);
+                }
+                
+                // Then try the zed-remote-server directory
+                let remote_server_path = releases_dir.join("zed-remote-server").join(filename);
+                if remote_server_path.exists() {
+                    return serve_release_file(&remote_server_path);
+                }
+            }
+        }
+    }
+    
     // Skip proxying requests for release files if we have a releases directory
     if data.config.releases_dir.is_some() && path_str.starts_with("releases/") && path_str != "releases/latest" {
         // Instead of returning 404, try to serve the file directly
@@ -564,28 +589,7 @@ async fn proxy_api_request(
         debug!("Attempting to serve release file from: {:?}", file_path);
         
         if file_path.exists() {
-            match fs::read(&file_path) {
-                Ok(bytes) => {
-                    // Determine content type based on file extension
-                    let content_type = match file_path.extension().and_then(|e| e.to_str()) {
-                        Some("dmg") => "application/x-apple-diskimage",
-                        Some("zip") => "application/zip",
-                        Some("exe") => "application/vnd.microsoft.portable-executable",
-                        Some("AppImage") => "application/x-executable",
-                        Some("json") => "application/json",
-                        Some("gz") => "application/gzip",
-                        _ => "application/octet-stream",
-                    };
-                    
-                    info!("Serving release file with content type: {}", content_type);
-                    return HttpResponse::Ok()
-                        .content_type(content_type)
-                        .body(bytes);
-                },
-                Err(e) => {
-                    error!("Error reading release file: {}", e);
-                }
-            }
+            return serve_release_file(&file_path);
         } else {
             debug!("Release file not found locally: {:?}", file_path);
         }
@@ -641,6 +645,34 @@ async fn proxy_api_request(
         Err(e) => {
             error!("Error proxying request: {}", e);
             HttpResponse::InternalServerError().body(format!("Error proxying request: {}", e))
+        }
+    }
+}
+
+// Helper function to serve a release file with appropriate content type
+fn serve_release_file(file_path: &PathBuf) -> HttpResponse {
+    match fs::read(file_path) {
+        Ok(bytes) => {
+            // Determine content type based on file extension
+            let content_type = match file_path.extension().and_then(|e| e.to_str()) {
+                Some("dmg") => "application/x-apple-diskimage",
+                Some("zip") => "application/zip",
+                Some("exe") => "application/vnd.microsoft.portable-executable",
+                Some("AppImage") => "application/x-executable",
+                Some("json") => "application/json",
+                Some("gz") => "application/gzip",
+                Some("tar") => "application/x-tar",
+                _ => "application/octet-stream",
+            };
+            
+            info!("Serving release file with content type: {}", content_type);
+            HttpResponse::Ok()
+                .content_type(content_type)
+                .body(bytes)
+        },
+        Err(e) => {
+            error!("Error reading release file: {}", e);
+            HttpResponse::InternalServerError().body(format!("Error reading release file: {}", e))
         }
     }
 }
