@@ -396,7 +396,7 @@ async fn get_latest_version(
         
         if platform_version_file.exists() {
             info!("Found platform-specific version file: {:?}", platform_version_file);
-            return read_version_file(platform_version_file, os.clone(), arch.clone(), &asset, data.config.domain.as_ref());
+            return read_version_file(platform_version_file, os.clone(), arch.clone(), &asset, data.config.domain.as_ref().map(|x| x.as_str()));
         }
         
         // If we're in proxy mode and the file doesn't exist, proxy the request
