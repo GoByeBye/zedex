@@ -67,7 +67,7 @@ impl Client {
     /// Get the current extensions index from Zed's API
     pub async fn get_extensions_index(&self) -> Result<Extensions> {
         let url = format!(
-            "{}/extensions?max_schema_version={}",
+            "{}/extensions?max_schema_version={}&include_native=true",
             self.api_host, self.max_schema_version
         );
         
