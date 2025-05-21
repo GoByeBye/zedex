@@ -4,6 +4,7 @@ mod version;
 mod local_server;
 
 pub use extension::{Extensions, WrappedExtensions, ExtensionVersionTracker};
+pub use extension::Extension;
 pub use extension::extensions_utils;
 pub use version::Version;
 pub use local_server::{LocalServer, ServerConfig};
@@ -11,7 +12,7 @@ pub use error::ZedError;
 
 use anyhow::Result;
 use std::env;
-use log::{debug, error};
+use log::{debug, info, error};
 use std::sync::Arc;
 
 /// Client configuration for interacting with Zed's API
@@ -64,21 +65,25 @@ impl Client {
         self
     }
 
-    /// Get the current extensions index from Zed's API
-    pub async fn get_extensions_index(&self) -> Result<Extensions> {
-        let url = format!(
-            "{}/extensions?max_schema_version={}&include_native=true",
+    /// Get the current extensions index, optionally filtering by a capability
+    pub async fn get_extensions_index(&self, provides: Option<&str>) -> Result<Extensions> {
+        // Build base URL
+        let mut url = format!(
+            "{}/extensions?max_schema_version={}&include_native=false",
             self.api_host, self.max_schema_version
         );
-        
-        debug!("Fetching extensions index from URL: {}", url);
-        
+        // Append provides filter if present
+        if let Some(cap) = provides {
+            url.push_str(&format!("&provides={}", cap));
+        }
+        info!("Fetching extensions index from URL: {}", url);
+        // Send request
         let response = self.http_client
             .get(&url)
             .send()
             .await?
             .error_for_status()?;
-
+        // Parse and return data
         let wrapped: WrappedExtensions = response.json().await?;
         Ok(wrapped.data)
     }
@@ -297,4 +302,4 @@ impl Client {
         debug!("Downloaded {} bytes for extension {} version {}", bytes.len(), extension_id, version);
         Ok(bytes)
     }
-} 
+}

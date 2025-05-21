@@ -3,6 +3,7 @@ mod zed;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
 use log::{debug, error, info, LevelFilter};
 use env_logger::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -75,7 +76,11 @@ enum Commands {
 #[derive(Subcommand)]
 enum GetTarget {
     /// Fetch the extension index
-    ExtensionIndex,
+    ExtensionIndex {
+        /// Filter extensions by provides tags (e.g. languages, language-servers)
+        #[clap(long)]
+        provides: Vec<String>,
+    },
     
     /// Fetch a specific extension by ID
     Extension {
@@ -182,9 +187,43 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Get { target } => match target {
-            GetTarget::ExtensionIndex => {
+            GetTarget::ExtensionIndex { provides } => {
                 let client = zed::Client::new();
-                let extensions = client.get_extensions_index().await?;
+                let mut map: HashMap<String, zed::Extension> = HashMap::new();
+                // Fetch and merge extension lists, deduplicating by id
+                if provides.is_empty() {
+                    // Initial fetch to discover all provides capabilities
+                    let initial_exts = client.get_extensions_index(None).await?;
+                    // Insert initial extensions
+                    for ext in initial_exts.iter() {
+                        map.insert(ext.id.clone(), ext.clone());
+                    }
+                    // Collect unique provides capabilities
+                    let mut caps = HashSet::new();
+                    for ext in initial_exts {
+                        for cap in &ext.provides {
+                            caps.insert(cap.clone());
+                        }
+                    }
+                    // Fetch and merge by each capability
+                    for cap in caps {
+                        let exts = client.get_extensions_index(Some(cap.as_str())).await?;
+                        for ext in exts {
+                            map.insert(ext.id.clone(), ext);
+                        }
+                    }
+                } else {
+                    // Fetch only for specified provides
+                    for prov in &provides {
+                        let exts = client.get_extensions_index(Some(prov.as_str())).await?;
+                        for ext in exts {
+                            map.insert(ext.id.clone(), ext);
+                        }
+                    }
+                }
+                let mut extensions: Vec<zed::Extension> = map.into_values().collect();
+                // Sort extensions by download count (highest first)
+                extensions.sort_by(|a, b| b.download_count.cmp(&a.download_count));
                 info!("Found {} extensions", extensions.len());
                 
                 // Save extensions to file
@@ -192,8 +231,8 @@ async fn main() -> Result<()> {
                 let extension_path = root_dir.join("extensions.json");
                 let wrapped = zed::WrappedExtensions { data: extensions };
                 let json = serde_json::to_string_pretty(&wrapped)?;
-                std::fs::write(extension_path, json)?;
-                info!("Saved extension index to {:?}", root_dir.join("extensions.json"));
+                std::fs::write(&extension_path, json)?;
+                info!("Saved extension index to {:?}", extension_path);
             },
             GetTarget::Extension { ids, output_dir } => {
                 // Resolve output directory from root_dir if not specified
@@ -215,7 +254,7 @@ async fn main() -> Result<()> {
                     wrapped.data
                 } else {
                     info!("Extension index not found. Fetching from API...");
-                    let extensions = client.get_extensions_index().await?;
+                    let extensions = client.get_extensions_index(None).await?;
                     info!("Found {} extensions", extensions.len());
                     
                     // Save extensions to file
@@ -309,7 +348,7 @@ async fn main() -> Result<()> {
                     wrapped.data
                 } else {
                     info!("Extension index not found. Fetching from API...");
-                    let extensions = client.get_extensions_index().await?;
+                    let extensions = client.get_extensions_index(None).await?;
                     info!("Found {} extensions", extensions.len());
                     
                     // Save extensions to file
