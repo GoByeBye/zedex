@@ -5,6 +5,7 @@ use actix_web::{web, App, HttpServer, HttpResponse, Responder, http};
 use actix_web::middleware::Logger;
 use actix_files::Files;
 use log::{debug, error, info, trace, warn};
+use semver::Version as SemverVersion; // Added for version comparison
 
 use crate::zed::{WrappedExtensions, Version, extensions_utils};
 
@@ -287,36 +288,89 @@ async fn download_extension(
     data: web::Data<ServerData>
 ) -> impl Responder {
     let id = path.into_inner();
-    
-    // First, try to find the extension in its own directory (new structure)
     let ext_dir = data.config.extensions_dir.join(&id);
-    let file_path = if ext_dir.exists() {
-        // Look for the latest version in the extension directory
-        // The file should be named "{id}.tgz" for the latest version
-        ext_dir.join(format!("{}.tgz", id))
-    } else {
-        // Fall back to the old structure (flat directory with all extensions)
-        data.config.extensions_dir.join(format!("{}.tar.gz", id))
-    };
+
+    // 1. Try to serve the latest version from the new structure ({id}/{id}.tgz)
+    let latest_file_path = ext_dir.join(format!("{}.tgz", id));
+    debug!("Checking for latest version: {}", latest_file_path.display());
     
-    debug!("Attempting to serve extension archive for id: {} from {:?}", id, file_path);
-    match fs::read(&file_path) {
-        Ok(bytes) => {
-            info!("Successfully served extension archive: {}", id);
-            HttpResponse::Ok()
-                .content_type("application/gzip")
-                .body(bytes)
-        },
-        Err(e) => {
-            if data.config.proxy_mode {
-                error!("Extension file not found, proxying: {}", id);
-                // In proxy mode, forward the request to Zed API
-                proxy_download_request(id).await
+    if let Ok(bytes) = fs::read(&latest_file_path) {
+        info!("Serving latest version for {}", id);
+        return HttpResponse::Ok()
+            .content_type("application/gzip")
+            .body(bytes);
+    }
+    
+    // 2. Try to find highest downloaded version from versions.json
+    if ext_dir.exists() {
+        let versions_file = ext_dir.join("versions.json");
+        
+        if versions_file.exists() {
+            debug!("Looking for highest available version in {}", versions_file.display());
+            
+            if let Ok(content) = fs::read_to_string(&versions_file) {
+                if let Ok(versions) = serde_json::from_str::<WrappedExtensions>(&content) {
+                    // Find highest version that has a corresponding downloaded file
+                    let highest_version = versions.data.iter()
+                        .filter_map(|ext| {
+                            let version = &ext.version;
+                            let archive_path = ext_dir.join(format!("{}-{}.tgz", id, version));
+                            
+                            if archive_path.exists() {
+                                SemverVersion::parse(version)
+                                    .map(|v| (v, version.clone(), archive_path))
+                                    .or_else(|e| {
+                                        warn!("Invalid version '{}' for {}: {}", version, id, e);
+                                        Err(e)
+                                    })
+                                    .ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2));
+                    
+                    // If we found a version, serve it
+                    if let Some((_, version_str, file_path)) = highest_version {
+                        info!("Serving highest downloaded version {} for {}", version_str, id);
+                        
+                        if let Ok(bytes) = fs::read(&file_path) {
+                            return HttpResponse::Ok()
+                                .content_type("application/gzip")
+                                .body(bytes);
+                        } else {
+                            error!("Failed to read archive file: {}", file_path.display());
+                        }
+                    } else {
+                        debug!("No downloaded versions found for {}", id);
+                    }
+                } else {
+                    error!("Failed to parse versions.json for {}", id);
+                }
             } else {
-                error!("Extension file not found: {}", id);
-                HttpResponse::NotFound().body(format!("Extension archive not found: {}", e))
+                error!("Failed to read versions.json for {}", id);
             }
         }
+    }
+
+    // 3. Fall back to the old structure (flat directory)
+    let old_path = data.config.extensions_dir.join(format!("{}.tar.gz", id));
+    debug!("Checking old structure: {}", old_path.display());
+    
+    if let Ok(bytes) = fs::read(&old_path) {
+        info!("Serving extension from old structure for {}", id);
+        return HttpResponse::Ok()
+            .content_type("application/gzip")
+            .body(bytes);
+    }
+    
+    // 4. Nothing found locally - proxy or return 404
+    if data.config.proxy_mode {
+        error!("Extension not found locally for {}, proxying request", id);
+        proxy_download_request(id).await
+    } else {
+        error!("Extension not found locally for {} and proxy mode is off", id);
+        HttpResponse::NotFound().body(format!("Extension archive not found for id: {}", id))
     }
 }
 
@@ -839,8 +893,7 @@ async fn proxy_extensions_updates(
         },
         Err(e) => {
             error!("Error proxying request: {}", e);
-            HttpResponse::InternalServerError()
-                .body(format!("Error proxying request: {}", e))
+            HttpResponse::InternalServerError().body(format!("Error proxying request: {}", e))
         }
     }
 }
