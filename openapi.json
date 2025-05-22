@@ -1,0 +1,683 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Zed Extension Server API",
+    "description": "API for serving Zed extensions and release files",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Zed Extension Mirror",
+      "url": "https://github.com/datmuslim/zedex"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:2654",
+      "description": "Local development server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "extensions",
+      "description": "Operations related to Zed extensions"
+    },
+    {
+      "name": "releases",
+      "description": "Operations related to Zed releases"
+    },
+    {
+      "name": "api",
+      "description": "Generic API operations"
+    }
+  ],
+  "paths": {
+    "/extensions": {
+      "get": {
+        "tags": ["extensions"],
+        "summary": "Get the extensions index",
+        "description": "Returns a list of all extensions, optionally filtered by parameters",
+        "operationId": "getExtensionsIndex",
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "description": "Text filter to apply to extension names and descriptions",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "max_schema_version",
+            "in": "query",
+            "description": "Maximum schema version to include",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "provides",
+            "in": "query",
+            "description": "Filter extensions by what they provide (e.g., 'languages', 'language-servers')",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A list of extensions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WrappedExtensions"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Extensions file not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/extensions/updates": {
+      "get": {
+        "tags": ["extensions"],
+        "summary": "Check for extension updates",
+        "description": "Returns a list of extensions that match the filter criteria, used to check for updates",
+        "operationId": "checkExtensionUpdates",
+        "parameters": [
+          {
+            "name": "min_schema_version",
+            "in": "query",
+            "description": "Minimum schema version to include",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "max_schema_version",
+            "in": "query",
+            "description": "Maximum schema version to include",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "min_wasm_api_version",
+            "in": "query",
+            "description": "Minimum WASM API version to include",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "max_wasm_api_version",
+            "in": "query",
+            "description": "Maximum WASM API version to include",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "Comma-separated list of extension IDs to filter by",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A list of extensions matching the criteria",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WrappedExtensions"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Extensions file not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/extensions/{id}": {
+      "get": {
+        "tags": ["extensions"],
+        "summary": "Get all versions of a specific extension",
+        "description": "Returns all available versions of a specific extension by ID",
+        "operationId": "getExtensionVersions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Extension identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A list of all versions of the specified extension",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WrappedExtensions"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Extension versions not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/extensions/{id}/download": {
+      "get": {
+        "tags": ["extensions"],
+        "summary": "Download an extension",
+        "description": "Downloads the latest version of a specific extension by ID",
+        "operationId": "downloadExtension",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Extension identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Extension archive",
+            "content": {
+              "application/gzip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Extension archive not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/extensions/{id}/{version}/download": {
+      "get": {
+        "tags": ["extensions"],
+        "summary": "Download a specific extension version",
+        "description": "Downloads a specific version of an extension by ID and version",
+        "operationId": "downloadExtensionWithVersion",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Extension identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "description": "Extension version",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Extension archive",
+            "content": {
+              "application/gzip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Extension version archive not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/releases/latest": {
+      "get": {
+        "tags": ["releases"],
+        "summary": "Get latest version information",
+        "description": "Returns information about the latest version of a Zed asset for a specific platform",
+        "operationId": "getLatestVersion",
+        "parameters": [
+          {
+            "name": "os",
+            "in": "query",
+            "description": "Operating system (e.g., 'macos', 'linux')",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "macos"
+            }
+          },
+          {
+            "name": "arch",
+            "in": "query",
+            "description": "Architecture (e.g., 'x86_64', 'aarch64')",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "x86_64"
+            }
+          },
+          {
+            "name": "asset",
+            "in": "query",
+            "description": "Asset name (e.g., 'zed', 'zed-remote-server')",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "zed"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest version information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Version"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Version file not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/releases/{channel}/latest": {
+      "get": {
+        "tags": ["releases"],
+        "summary": "Get latest version information for a specific channel",
+        "description": "Returns information about the latest version of a Zed asset for a specific channel and platform",
+        "operationId": "getLatestVersionByChannel",
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "path",
+            "description": "Release channel (e.g., 'stable')",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "os",
+            "in": "query",
+            "description": "Operating system (e.g., 'macos', 'linux')",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "macos"
+            }
+          },
+          {
+            "name": "arch",
+            "in": "query",
+            "description": "Architecture (e.g., 'x86_64', 'aarch64')",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "x86_64"
+            }
+          },
+          {
+            "name": "asset",
+            "in": "query",
+            "description": "Asset name (e.g., 'zed', 'zed-remote-server')",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "zed"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest version information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Version"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Version file not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/releases/{channel}/{version}/{filename}": {
+      "get": {
+        "tags": ["releases"],
+        "summary": "Download a specific release file",
+        "description": "Downloads a specific release file by channel, version, and filename",
+        "operationId": "serveReleaseApi",
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "path",
+            "description": "Release channel (e.g., 'stable')",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "description": "Release version",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "description": "Filename of the release asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "update",
+            "in": "query",
+            "description": "Whether this is an update request",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Release file",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Release file not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/releases/{asset}/{filename}": {
+      "get": {
+        "tags": ["releases"],
+        "summary": "Download a release file from the traditional path",
+        "description": "Downloads a release file from the traditional path pattern",
+        "operationId": "serveReleaseFile",
+        "parameters": [
+          {
+            "name": "asset",
+            "in": "path",
+            "description": "Asset name (e.g., 'zed', 'zed-remote-server')",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "description": "Filename of the release asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Release file",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Release file not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/extensions-archive/{path}": {
+      "get": {
+        "tags": ["extensions"],
+        "summary": "Browse the extensions archive",
+        "description": "Browse or download files from the extensions archive directory",
+        "operationId": "browseExtensionsArchive",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "description": "Path within the extensions archive",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Directory listing or file content",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Path not found"
+          }
+        }
+      }
+    },
+    "/api/{path}": {
+      "get": {
+        "tags": ["api"],
+        "summary": "Generic API proxy",
+        "description": "Proxy for other API requests not covered by specific endpoints",
+        "operationId": "proxyApiRequest",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "description": "API path to proxy",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "API path not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "WrappedExtensions": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Extension"
+            }
+          }
+        }
+      },
+      "Extension": {
+        "type": "object",
+        "required": ["id", "name", "version", "schema_version"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the extension"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable name of the extension"
+          },
+          "version": {
+            "type": "string",
+            "description": "Version of the extension"
+          },
+          "schema_version": {
+            "type": "integer",
+            "description": "Schema version of the extension"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the extension"
+          },
+          "repository": {
+            "type": "string",
+            "description": "URL to the repository"
+          },
+          "author": {
+            "type": "string",
+            "description": "Author of the extension"
+          },
+          "wasm_api_version": {
+            "type": "string",
+            "description": "WASM API version used by the extension",
+            "nullable": true
+          },
+          "provides": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of features provided by the extension"
+          }
+        }
+      },
+      "Version": {
+        "type": "object",
+        "required": ["version", "url"],
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Version number"
+          },
+          "url": {
+            "type": "string",
+            "description": "URL to download the release"
+          },
+          "api_url": {
+            "type": "string",
+            "description": "Alternative API URL to download the release",
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "description": "Release notes",
+            "nullable": true
+          }
+        }
+      }
+    }
+  }
+}
