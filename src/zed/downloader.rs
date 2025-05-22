@@ -2,6 +2,7 @@ use anyhow::Result;
 use futures_util::future;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, error, info};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -308,4 +309,61 @@ pub async fn download_extension_by_id(
     }
     
     Ok(())
+}
+
+/// Downloads an extension index based on provided filter criteria and saves it to a file
+pub async fn download_extension_index(
+    client: &Client,
+    root_dir: impl AsRef<Path>,
+    provides: &[String]
+) -> Result<Vec<Extension>> {
+    let root_dir = root_dir.as_ref();
+    let mut map: HashMap<String, Extension> = HashMap::new();
+    
+    // Fetch and merge extension lists, deduplicating by id
+    if provides.is_empty() {
+        // Initial fetch to discover all provides capabilities
+        let initial_exts = client.get_extensions_index(None).await?;
+        // Insert initial extensions
+        for ext in initial_exts.iter() {
+            map.insert(ext.id.clone(), ext.clone());
+        }
+        // Collect unique provides capabilities
+        let mut caps = HashSet::new();
+        for ext in initial_exts {
+            for cap in &ext.provides {
+                caps.insert(cap.clone());
+            }
+        }
+        // Fetch and merge by each capability
+        for cap in caps {
+            let exts = client.get_extensions_index(Some(cap.as_str())).await?;
+            for ext in exts {
+                map.insert(ext.id.clone(), ext);
+            }
+        }
+    } else {
+        // Fetch only for specified provides
+        for prov in provides {
+            let exts = client.get_extensions_index(Some(prov.as_str())).await?;
+            for ext in exts {
+                map.insert(ext.id.clone(), ext);
+            }
+        }
+    }
+    
+    let mut extensions: Vec<Extension> = map.into_values().collect();
+    // Sort extensions by download count (highest first)
+    extensions.sort_by(|a, b| b.download_count.cmp(&a.download_count));
+    info!("Found {} extensions", extensions.len());
+    
+    // Save extensions to file
+    std::fs::create_dir_all(root_dir)?;
+    let extension_path = root_dir.join("extensions.json");
+    let wrapped = WrappedExtensions { data: extensions.clone() };
+    let json = serde_json::to_string_pretty(&wrapped)?;
+    std::fs::write(&extension_path, json)?;
+    info!("Saved extension index to {:?}", extension_path);
+    
+    Ok(extensions)
 }

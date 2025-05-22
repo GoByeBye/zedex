@@ -9,7 +9,7 @@ pub use extension::Extension;
 pub use extension::extensions_utils;
 pub use version::Version;
 pub use local_server::{LocalServer, ServerConfig};
-pub use downloader::{download_extensions, download_extension_by_id, DownloadOptions};
+pub use downloader::{download_extensions, download_extension_by_id, download_extension_index, DownloadOptions};
 
 use anyhow::Result;
 use log::{debug, info, error};

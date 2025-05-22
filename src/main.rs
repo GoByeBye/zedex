@@ -3,7 +3,6 @@ mod zed;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use std::collections::{HashMap, HashSet};
 use log::{debug, info, LevelFilter};
 use env_logger::Builder;
 use std::io::Write;
@@ -172,53 +171,9 @@ async fn main() -> Result<()> {
     let root_dir = cli.root_dir.clone();
 
     match cli.command {
-        Commands::Get { target } => match target {
-            GetTarget::ExtensionIndex { provides } => {
+        Commands::Get { target } => match target {            GetTarget::ExtensionIndex { provides } => {
                 let client = zed::Client::new();
-                let mut map: HashMap<String, zed::Extension> = HashMap::new();
-                // Fetch and merge extension lists, deduplicating by id
-                if provides.is_empty() {
-                    // Initial fetch to discover all provides capabilities
-                    let initial_exts = client.get_extensions_index(None).await?;
-                    // Insert initial extensions
-                    for ext in initial_exts.iter() {
-                        map.insert(ext.id.clone(), ext.clone());
-                    }
-                    // Collect unique provides capabilities
-                    let mut caps = HashSet::new();
-                    for ext in initial_exts {
-                        for cap in &ext.provides {
-                            caps.insert(cap.clone());
-                        }
-                    }
-                    // Fetch and merge by each capability
-                    for cap in caps {
-                        let exts = client.get_extensions_index(Some(cap.as_str())).await?;
-                        for ext in exts {
-                            map.insert(ext.id.clone(), ext);
-                        }
-                    }
-                } else {
-                    // Fetch only for specified provides
-                    for prov in &provides {
-                        let exts = client.get_extensions_index(Some(prov.as_str())).await?;
-                        for ext in exts {
-                            map.insert(ext.id.clone(), ext);
-                        }
-                    }
-                }
-                let mut extensions: Vec<zed::Extension> = map.into_values().collect();
-                // Sort extensions by download count (highest first)
-                extensions.sort_by(|a, b| b.download_count.cmp(&a.download_count));
-                info!("Found {} extensions", extensions.len());
-                
-                // Save extensions to file
-                std::fs::create_dir_all(&root_dir)?;
-                let extension_path = root_dir.join("extensions.json");
-                let wrapped = zed::WrappedExtensions { data: extensions };
-                let json = serde_json::to_string_pretty(&wrapped)?;
-                std::fs::write(&extension_path, json)?;
-                info!("Saved extension index to {:?}", extension_path);
+                zed::download_extension_index(&client, &root_dir, &provides).await?;
             },
             GetTarget::Extension { ids, output_dir } => {
                 // Resolve output directory from root_dir if not specified
@@ -226,8 +181,7 @@ async fn main() -> Result<()> {
                 
                 // Create output directory
                 std::fs::create_dir_all(&output_dir)?;
-                
-                // Create a client with the output directory set
+                  // Create a client with the output directory set
                 let client = zed::Client::new()
                     .with_extensions_local_dir(output_dir.to_string_lossy().to_string());
                 
@@ -240,14 +194,7 @@ async fn main() -> Result<()> {
                     wrapped.data
                 } else {
                     info!("Extension index not found. Fetching from API...");
-                    let extensions = client.get_extensions_index(None).await?;
-                    info!("Found {} extensions", extensions.len());
-                    
-                    // Save extensions to file
-                    let wrapped = zed::WrappedExtensions { data: extensions.clone() };
-                    let json = serde_json::to_string_pretty(&wrapped)?;
-                    std::fs::write(&extensions_file, json)?;                info!("Saved extension index to {:?}", extensions_file);
-                    extensions
+                    zed::download_extension_index(&client, &output_dir, &Vec::new()).await?
                 };
                 
                 // Download each extension with a progress bar
@@ -275,8 +222,7 @@ async fn main() -> Result<()> {
                 // Create a client
                 let client = zed::Client::new()
                     .with_extensions_local_dir(output_dir.to_string_lossy().to_string());
-                
-                // Get the extension index
+                  // Get the extension index
                 let extensions_file = output_dir.join("extensions.json");
                 let extensions = if extensions_file.exists() {
                     info!("Loading extension index from {:?}", extensions_file);
@@ -285,15 +231,7 @@ async fn main() -> Result<()> {
                     wrapped.data
                 } else {
                     info!("Extension index not found. Fetching from API...");
-                    let extensions = client.get_extensions_index(None).await?;
-                    info!("Found {} extensions", extensions.len());
-                    
-                    // Save extensions to file
-                    let wrapped = zed::WrappedExtensions { data: extensions.clone() };
-                    let json = serde_json::to_string_pretty(&wrapped)?;
-                    std::fs::write(&extensions_file, json)?;
-                    info!("Saved extension index to {:?}", extensions_file);
-                    extensions
+                    zed::download_extension_index(&client, &output_dir, &Vec::new()).await?
                 };
                   // Load or create the version tracker
                 let version_tracker_file = output_dir.join("version_tracker.json");
