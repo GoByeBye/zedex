@@ -4,10 +4,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::collections::{HashMap, HashSet};
-use log::{debug, error, info, LevelFilter};
+use log::{debug, info, LevelFilter};
 use env_logger::Builder;
-use indicatif::{ProgressBar, ProgressStyle};
-use std::sync::Arc;
 use std::io::Write;
 use std::fs;
 
@@ -37,13 +35,6 @@ enum Commands {
         #[clap(subcommand)]
         target: GetTarget,
     },
-    
-    /// Get latest Zed release information or download releases
-    Release {
-        #[clap(subcommand)]
-        target: ReleaseTarget,
-    },
-
     /// Start a local server to serve Zed extensions API
     Serve {
         /// Port to run the server on
@@ -58,10 +49,6 @@ enum Commands {
         #[clap(long)]
         extensions_dir: Option<PathBuf>,
         
-        /// Directory containing release information
-        #[clap(long)]
-        releases_dir: Option<PathBuf>,
-
         /// Whether to proxy requests to zed.dev for missing content
         #[clap(long)]
         proxy_mode: bool,
@@ -340,178 +327,8 @@ async fn main() -> Result<()> {
                 info!("All extensions downloaded to {:?}", output_dir);
             },
         },
-        Commands::Release { target } => match target {
-            ReleaseTarget::Latest => {
-                let client = zed::Client::new();
-                match client.get_latest_version().await {
-                    Ok(version) => {
-                        println!("Latest Zed version: {}", version.version);
-                        println!("Download URL: {}", version.url);
-                    },
-                    Err(e) => {
-                        error!("Failed to get latest version: {}", e);
-                    }
-                }
-            },
-            ReleaseTarget::RemoteServerLatest => {
-                let client = zed::Client::new();
-                match client.get_latest_remote_server_version().await {
-                    Ok(version) => {
-                        println!("Latest Zed Remote Server version: {}", version.version);
-                        println!("Download URL: {}", version.url);
-                    },
-                    Err(e) => {
-                        error!("Failed to get latest remote server version: {}", e);
-                    }
-                }
-            },
-            ReleaseTarget::Download { output_dir } => {
-                // Create the release cache directory structure
-                let release_dir = if let Some(dir) = output_dir {
-                    dir
-                } else {
-                    let mut dir = root_dir.clone();
-                    dir.push("releases");
-                    dir.push("zed");
-                    dir
-                };
-                std::fs::create_dir_all(&release_dir)?;
-                
-                let client = zed::Client::new();
-                
-                // Define all supported platforms
-                let platforms = [
-                    ("linux", "x86_64"),
-                    ("macos", "x86_64"),
-                    ("macos", "aarch64")
-                ];
-                
-                // Download for each platform
-                for (os, arch) in platforms.iter() {
-                    info!("Fetching Zed for {}-{}...", os, arch);
-                    
-                    // Create a client with platform set
-                    let platform_client = client.clone().with_platform(os.to_string(), arch.to_string());
-                    
-                    match platform_client.get_latest_version().await {
-                        Ok(version) => {
-                            info!("Latest Zed version for {}-{}: {}", os, arch, version.version);
-                            
-                            // Create a progress bar for this download
-                            let pb = Arc::new(ProgressBar::new(0));
-                            pb.set_style(ProgressStyle::default_bar()
-                                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                                .unwrap()
-                                .progress_chars("#>-"));
-                            
-                            let pb_clone = pb.clone();
-                            match platform_client.download_release_asset_with_progress(&version, 
-                                move |downloaded, total| {
-                                    pb_clone.set_length(total);
-                                    pb_clone.set_position(downloaded);
-                                }).await {
-                                Ok(bytes) => {
-                                    pb.finish_with_message(format!("Downloaded Zed {} for {}-{}", version.version, os, arch));
-                                    
-                                    // Save version info with platform-specific filename
-                                    let version_file = release_dir.join(format!("latest-version-{}-{}.json", os, arch));
-                                    std::fs::write(&version_file, serde_json::to_string_pretty(&version)?)?;
-                                    info!("Saved version info to {:?}", version_file);
-                                    
-                                    // Save the release asset with platform in filename
-                                    let file_path = release_dir.join(format!("zed-{}-{}-{}.gz", version.version, os, arch));
-                                    match std::fs::write(&file_path, bytes) {
-                                        Ok(_) => info!("Successfully downloaded Zed {} for {}-{} to {:?}", version.version, os, arch, file_path),
-                                        Err(e) => error!("Failed to write release file for {}-{}: {}", os, arch, e),
-                                    }
-                                },
-                                Err(e) => {
-                                    pb.finish_with_message(format!("Failed to download for {}-{}", os, arch));
-                                    error!("Failed to download release for {}-{}: {}", os, arch, e);
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            error!("Failed to get latest version for {}-{}: {}", os, arch, e);
-                        }
-                    }
-                }
-            },
-            ReleaseTarget::DownloadRemoteServer { output_dir } => {
-                // Create the release cache directory structure
-                let release_dir = if let Some(dir) = output_dir {
-                    dir
-                } else {
-                    let mut dir = root_dir.clone();
-                    dir.push("releases");
-                    dir.push("zed-remote-server");
-                    dir
-                };
-                std::fs::create_dir_all(&release_dir)?;
-                
-                let client = zed::Client::new();
-                
-                // Define all supported platforms
-                let platforms = [
-                    ("linux", "x86_64"),
-                    ("linux", "aarch64"),
-                    ("macos", "x86_64"),
-                    ("macos", "aarch64")
-                ];
-                
-                // Download for each platform
-                for (os, arch) in platforms.iter() {
-                    info!("Fetching Zed Remote Server for {}-{}...", os, arch);
-                    
-                    // Create a client with platform set
-                    let platform_client = client.clone().with_platform(os.to_string(), arch.to_string());
-                    
-                    match platform_client.get_latest_remote_server_version().await {
-                        Ok(version) => {
-                            info!("Latest Zed Remote Server version for {}-{}: {}", os, arch, version.version);
-                            
-                            // Create a progress bar for this download
-                            let pb = Arc::new(ProgressBar::new(0));
-                            pb.set_style(ProgressStyle::default_bar()
-                                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                                .unwrap()
-                                .progress_chars("#>-"));
-                            
-                            let pb_clone = pb.clone();
-                            match platform_client.download_release_asset_with_progress(&version, 
-                                move |downloaded, total| {
-                                    pb_clone.set_length(total);
-                                    pb_clone.set_position(downloaded);
-                                }).await {
-                                Ok(bytes) => {
-                                    pb.finish_with_message(format!("Downloaded Zed Remote Server {} for {}-{}", version.version, os, arch));
-                                    
-                                    // Save version info with platform-specific filename
-                                    let version_file = release_dir.join(format!("latest-version-{}-{}.json", os, arch));
-                                    std::fs::write(&version_file, serde_json::to_string_pretty(&version)?)?;
-                                    info!("Saved version info to {:?}", version_file);
-                                    
-                                    // Save the release asset with platform in filename
-                                    let file_path = release_dir.join(format!("zed-remote-server-{}-{}-{}.gz", version.version, os, arch));
-                                    match std::fs::write(&file_path, bytes) {
-                                        Ok(_) => info!("Successfully downloaded Zed Remote Server {} for {}-{} to {:?}", version.version, os, arch, file_path),
-                                        Err(e) => error!("Failed to write release file for {}-{}: {}", os, arch, e),
-                                    }
-                                },
-                                Err(e) => {
-                                    pb.finish_with_message(format!("Failed to download for {}-{}", os, arch));
-                                    error!("Failed to download release for {}-{}: {}", os, arch, e);
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            error!("Failed to get latest version for {}-{}: {}", os, arch, e);
-                        }
-                    }
-                }
-            },
-        },
-        Commands::Serve { port, host, extensions_dir, releases_dir, proxy_mode, domain } => {
+
+        Commands::Serve { port, host, extensions_dir, proxy_mode, domain } => {
             // Set up the server configuration
             let mut config = zed::ServerConfig::default();
             config.port = port;
@@ -524,13 +341,6 @@ async fn main() -> Result<()> {
                 config.extensions_dir = ext_dir;
             } else {
                 config.extensions_dir = root_dir.clone();
-            }
-            
-            // Set the releases directory if provided, otherwise use the default
-            if let Some(rel_dir) = releases_dir {
-                config.releases_dir = Some(rel_dir);
-            } else {
-                config.releases_dir = Some(root_dir.join("releases"));
             }
             
             // Make sure all required directories exist

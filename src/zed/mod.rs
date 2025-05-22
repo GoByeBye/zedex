@@ -9,11 +9,9 @@ pub use extension::Extension;
 pub use extension::extensions_utils;
 pub use version::Version;
 pub use local_server::{LocalServer, ServerConfig};
-pub use error::ZedError;
 pub use downloader::{download_extensions, download_extension_by_id, DownloadOptions};
 
 use anyhow::Result;
-use std::env;
 use log::{debug, info, error};
 use std::sync::Arc;
 
