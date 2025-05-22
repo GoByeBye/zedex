@@ -48,20 +48,19 @@ impl ExtensionVersionTracker {
     pub fn update_extension(&mut self, extension: &Extension) {
         self.extensions.insert(extension.id.clone(), extension.version.clone());
     }
-
-    /// Check if the tracker contains an extension with the given version
-    pub fn has_version(&self, id: &str, version: &str) -> bool {
-        match self.extensions.get(id) {
-            Some(tracked_version) => tracked_version == version,
-            None => false,
+    
+    /// Merge another tracker into this one
+    pub fn merge(&mut self, other: ExtensionVersionTracker) {
+        for (id, version) in other.extensions {
+            self.extensions.insert(id, version);
         }
     }
-
-    /// Check if the tracker has a newer version than the one provided
+    
+    /// Check if an extension has a newer version than what we've tracked
     pub fn has_newer_version(&self, extension: &Extension) -> bool {
         match self.extensions.get(&extension.id) {
             Some(tracked_version) => tracked_version != &extension.version,
-            None => false,
+            None => true, // We haven't tracked this extension yet
         }
     }
 }
@@ -138,4 +137,4 @@ pub mod extensions_utils {
         debug!("Filtered extensions from {} to {}", extensions.len(), filtered.len());
         filtered
     }
-} 
+}
