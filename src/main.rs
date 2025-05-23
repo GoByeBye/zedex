@@ -282,16 +282,24 @@ async fn main() -> Result<()> {
             }
             
             // Make sure all required directories exist
-            std::fs::create_dir_all(&config.extensions_dir)?;
+            if !config.extensions_dir.exists() {
+                std::fs::create_dir_all(&config.extensions_dir)?;
+            }
             if let Some(releases_dir) = &config.releases_dir {
-                std::fs::create_dir_all(releases_dir)?;
+                if !releases_dir.exists() {
+                    std::fs::create_dir_all(releases_dir)?;
+                }
                 
                 // Create zed and zed-remote-server directories if they don't exist
                 let zed_dir = releases_dir.join("zed");
                 let remote_server_dir = releases_dir.join("zed-remote-server");
                 
-                std::fs::create_dir_all(&zed_dir)?;
-                std::fs::create_dir_all(&remote_server_dir)?;
+                if !zed_dir.exists() {
+                    std::fs::create_dir_all(&zed_dir)?;
+                }
+                if !remote_server_dir.exists() {
+                    std::fs::create_dir_all(&remote_server_dir)?;
+                }
                 
                 info!("Created release directories:");
                 info!("  - {:?}", zed_dir);
