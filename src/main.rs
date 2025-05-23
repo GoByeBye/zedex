@@ -282,7 +282,9 @@ async fn main() -> Result<()> {
             }
             
             // Make sure all required directories exist
-            std::fs::create_dir_all(&config.extensions_dir)?;
+            if let Some(extensions_dir) = &config.extensions_dir {
+                std::fs::create_dir_all(&config.extensions_dir)?;
+            }
             if let Some(releases_dir) = &config.releases_dir {
                 std::fs::create_dir_all(releases_dir)?;
                 
