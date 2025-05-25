@@ -281,9 +281,6 @@ async fn main() -> Result<()> {
             ReleaseTarget::Download {output_dir} => {
                 let output_dir = output_dir.unwrap_or_else(|| root_dir.clone());
                 
-                // Create output directory
-                std::fs::create_dir_all(&output_dir)?;
-                
                 // Create a client
                 let client = zed::Client::new();
                 
@@ -312,31 +309,6 @@ async fn main() -> Result<()> {
                 config.extensions_dir = ext_dir;
             } else {
                 config.extensions_dir = root_dir.clone();
-            }
-            
-            // Make sure all required directories exist
-            if !config.extensions_dir.exists() {
-                std::fs::create_dir_all(&config.extensions_dir)?;
-            }
-            if let Some(releases_dir) = &config.releases_dir {
-                if !releases_dir.exists() {
-                    std::fs::create_dir_all(releases_dir)?;
-                }
-                
-                // Create zed and zed-remote-server directories if they don't exist
-                let zed_dir = releases_dir.join("zed");
-                let remote_server_dir = releases_dir.join("zed-remote-server");
-                
-                if !zed_dir.exists() {
-                    std::fs::create_dir_all(&zed_dir)?;
-                }
-                if !remote_server_dir.exists() {
-                    std::fs::create_dir_all(&remote_server_dir)?;
-                }
-                
-                info!("Created release directories:");
-                info!("  - {:?}", zed_dir);
-                info!("  - {:?}", remote_server_dir);
             }
             
             // Start the server
