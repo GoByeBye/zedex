@@ -13,7 +13,4 @@ pub enum ZedError {
 
     #[error("Invalid URL: {0}")]
     UrlParseError(#[from] url::ParseError),
-    
-    #[error("Platform not supported: {0}")]
-    PlatformNotSupported(String),
 } 

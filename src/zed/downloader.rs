@@ -367,3 +367,90 @@ pub async fn download_extension_index(
     
     Ok(extensions)
 }
+
+// Downloads the latest Zed release for supported platforms
+pub async fn download_zed_release(client: &Client, root_dir: impl AsRef<Path>) {
+    let platforms = [
+        // TODO: Add windows when windows support is implemented
+        ("zed", "linux", "x86_64"),
+        ("zed-remote-server", "linux", "x86_64"),
+        ("zed", "linux", "aarch64"),
+        ("zed-remote-server", "linux", "aarch64"),
+        ("zed", "macos", "x86_64"),
+        ("zed-remote-server", "macos", "x86_64"),
+        ("zed", "macos", "aarch64"),
+    ];
+
+
+    for (asset,os, arch) in platforms {
+        let url = format!(
+            "{}/api/releases/latest?asset={}&os={}&arch={}",
+            client.host, asset, os, arch
+        );
+        info!("Downloading Zed release from {}", url);
+        // response from server would be {"version":"0.187.8","url":"https://zed.dev/api/releases/stable/0.187.8/zed-linux-x86_64.tar.gz?update=1"}
+        let response = client.http_client.get(&url).send().await;
+
+        match response {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    let release: serde_json::Value = resp.json().await.unwrap();
+                    let version: &str = release["version"].as_str().unwrap_or("unknown");
+                    let download_url: &str = release["url"].as_str().unwrap_or("");
+                    let releases_path = root_dir.as_ref().join("releases");
+                    
+                    info!("Latest Zed version: {}", version);
+                    info!("Download URL: {}", download_url);
+                    
+                    // Create output directory if it doesn't exist
+                    let output_dir = root_dir.as_ref().join("releases").join(version);
+
+                    if !releases_path.exists() {
+                        std::fs::create_dir_all(&releases_path).unwrap();
+                    }
+                    let cache_file = releases_path.join(format!("{}-{}-{}.json", asset, os, arch));
+                    let cache_content = serde_json::to_string(&release).unwrap();
+                    std::fs::write(&cache_file, cache_content).unwrap();
+                    info!("Zed release cache saved to {:?}", cache_file);
+
+                    std::fs::create_dir_all(&output_dir).unwrap();
+                    
+                    // Download the file
+                    let file_path = output_dir.join(format!("{}-{}-{}.tar.gz", asset, os, arch));
+                    let download_result = client.http_client.get(download_url).send().await;
+                    match download_result {
+                        Ok(resp) => {
+                            let bytes_result = resp.bytes().await;
+                            match bytes_result {
+                                Ok(bytes) => {
+                                    use std::io::Write;
+                                    match std::fs::File::create(&file_path) {
+                                        Ok(mut file) => {
+                                            if let Err(e) = file.write_all(&bytes) {
+                                                error!("Failed to write Zed release to file: {}", e);
+                                            } else {
+                                                info!("Zed release downloaded to {:?}", file_path);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to create file for Zed release: {}", e);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to read bytes from Zed release response: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to download Zed release: {}", e);
+                        }
+                    }
+                } else {
+                    error!("Failed to fetch latest Zed release: {}", resp.status());
+                }
+            },
+            Err(e) => error!("Error fetching latest Zed release: {}", e),
+        }
+    }
+}

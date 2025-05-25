@@ -34,6 +34,11 @@ enum Commands {
         #[clap(subcommand)]
         target: GetTarget,
     },
+    /// Fetch Zed releases
+    Release {
+        #[clap(subcommand)]
+        target: ReleaseTarget,
+    },
     /// Start a local server to serve Zed extensions API
     Serve {
         /// Port to run the server on
@@ -108,8 +113,8 @@ enum ReleaseTarget {
     
     /// Download the latest Zed release
     Download {
-        /// Output directory for downloaded release
         #[clap(long)]
+        /// Output directory for downloaded Zed release
         output_dir: Option<PathBuf>,
     },
     
@@ -168,9 +173,7 @@ async fn main() -> Result<()> {
     info!("Starting Zed Extension Mirror");
     debug!("Using root directory: {:?}", cli.root_dir);
     
-    let root_dir = cli.root_dir.clone();
-
-    match cli.command {
+    let root_dir = cli.root_dir.clone();    match cli.command {
         Commands::Get { target } => match target {            GetTarget::ExtensionIndex { provides } => {
                 let client = zed::Client::new();
                 zed::download_extension_index(&client, &root_dir, &provides).await?;
@@ -263,6 +266,36 @@ async fn main() -> Result<()> {
                 fs::write(&version_tracker_file, version_tracker_json)?;
                 
                 info!("All extensions downloaded to {:?}", output_dir);
+            },
+        },
+        
+        Commands::Release { target } => match target {
+            ReleaseTarget::Latest => {
+                info!("Not implemented yet: Fetching latest Zed release info");
+                // Would implement version info fetching without download
+            },
+            ReleaseTarget::RemoteServerLatest => {
+                info!("Not implemented yet: Fetching latest Zed Remote Server release info");
+                // Would implement remote server version info fetching without download
+            },
+            ReleaseTarget::Download {output_dir} => {
+                let output_dir = output_dir.unwrap_or_else(|| root_dir.clone());
+                
+                // Create output directory
+                std::fs::create_dir_all(&output_dir)?;
+                
+                // Create a client
+                let client = zed::Client::new();
+                
+                // Download the latest Zed release
+                info!("Downloading latest Zed release to {:?}", output_dir);
+                zed::download_zed_release(&client, &output_dir).await;
+                
+                info!("Zed release download complete");
+            },
+            ReleaseTarget::DownloadRemoteServer { output_dir: _ } => {
+                info!("Not implemented yet: Downloading latest Zed Remote Server release");
+                // Would implement remote server download logic
             },
         },
 

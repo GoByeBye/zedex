@@ -456,21 +456,19 @@ async fn get_latest_version(
     // Log the channel if provided in the path
     if let Some(path) = &path {
         let channel = path.as_str();
-        info!("Latest version request for channel={}, asset={}, os={}, arch={}", channel, asset, os, arch);
+        info!("Latest version request for channel={channel}, asset={asset}, os={os}, arch={arch}");
     } else {
-        info!("Latest version request for asset={}, os={}, arch={}", asset, os, arch);
+        info!("Latest version request for asset={asset}, os={os}, arch={arch}");
     }
     
     if let Some(releases_dir) = &data.config.releases_dir {
-        // Determine the asset-specific directory
-        let asset_dir = releases_dir.join(&asset);
-        
         // Try to find platform-specific version file
-        let platform_version_file = asset_dir.join(format!("latest-version-{}-{}.json", os, arch));
-        
+        let platform_version_file = releases_dir.join(format!("{asset}-{os}-{arch}.json"));
+        info!("Looking for platform-specific version file: {:?}", platform_version_file);
+
         if platform_version_file.exists() {
             info!("Found platform-specific version file: {:?}", platform_version_file);
-            return read_version_file(platform_version_file, os.clone(), arch.clone(), &asset, data.config.domain.as_ref().map(|x| x.as_str()));
+            return read_version_file(platform_version_file, data.config.domain.as_ref().map(|x| x.as_str()));
         }
         
         // If we're in proxy mode and the file doesn't exist, proxy the request
@@ -489,90 +487,33 @@ async fn get_latest_version(
 }
 
 // Helper function to read and parse a version file, replacing URLs with local ones if needed
-fn read_version_file(file_path: PathBuf, os: String, arch: String, asset: &str, domain: Option<&str>) -> HttpResponse {
+fn read_version_file(file_path: PathBuf, domain: Option<&str>) -> HttpResponse {
+    debug!("Reading version file: {:?}", file_path);
     match fs::read_to_string(&file_path) {
         Ok(content) => {
+            // Parse the JSON content
             match serde_json::from_str::<Version>(&content) {
-                Ok(mut version) => {
-                    debug!("Successfully parsed version: {}", version.version);
-                    
-                    // Extract version from the parsed version object
-                    let version_number = &version.version;
-                    
-                    // First check for platform-specific file
-                    let parent_dir = file_path.parent().unwrap_or(&file_path);
-                    let asset_file_name = format!("{}-{}-{}-{}.gz", asset, version_number, os, arch);
-                    let local_file = parent_dir.join(&asset_file_name);
-                    
-                    if local_file.exists() {
-                        // Use both URL patterns for compatibility
-                        // Traditional pattern with the release file path
-                        let traditional_path = format!("/releases/{}/{}", asset, asset_file_name);
-                        
-                        // New API pattern
-                        let api_path = format!("/api/releases/stable/{}/{}", 
-                            version_number, asset_file_name);
-                        
-                        // If domain is provided, prepend it to the local path
-                        let full_url = if let Some(domain) = domain {
-                            format!("{}{}", domain, traditional_path)
-                        } else {
-                            traditional_path
-                        };
-                        
-                        debug!("Using local file path: {}", full_url);
-                        version.url = full_url;
-                        
-                        // Also include API URL in the version metadata for clients that need it
-                        version.api_url = Some(if let Some(domain) = domain {
-                            format!("{}{}", domain, api_path)
-                        } else {
-                            api_path
-                        });
-                    } else {
-                        // If platform-specific file doesn't exist, check if we have any matching
-                        // files that might work (for different platforms)
-                        let asset_dir = parent_dir;
-                        
-                        if let Ok(dir_entries) = fs::read_dir(asset_dir) {
-                            for entry in dir_entries.flatten() {
-                                let path = entry.path();
-                                let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                                
-                                // Check if the filename contains the asset and version
-                                if filename.starts_with(&format!("{}-{}", asset, version_number)) && 
-                                   filename.ends_with(".gz") {
-                                    
-                                    // Use this file, even if for a different platform
-                                    let traditional_path = format!("/releases/{}/{}", asset, filename);
-                                    let api_path = format!("/api/releases/stable/{}/{}", version_number, filename);
-                                    
-                                    debug!("No exact platform match. Using alternative: {}", traditional_path);
-                                    version.url = traditional_path;
-                                    version.api_url = Some(api_path);
-                                    break;
-                                }
-                            }
-                        }
+                Ok(version) => {
+                    // Replace URLs with local paths if domain is provided
+                    let mut version = version;
+                    if let Some(domain) = domain {
+                        version.url = version.url.replace("https://zed.dev", &format!("{}", domain));
                     }
                     
+                    info!("Successfully read version file: {:?}", file_path);
                     HttpResponse::Ok()
                         .content_type("application/json")
                         .json(version)
                 },
                 Err(e) => {
-                    error!("Error parsing version file: {}", e);
-                    HttpResponse::InternalServerError()
-                        .content_type("text/plain")
-                        .body(format!("Error parsing version file: {}", e))
+                    error!("Failed to parse version file {}: {}", file_path.display(), e);
+                    HttpResponse::InternalServerError().body(format!("Error parsing version file: {}", e))
                 }
             }
         },
         Err(e) => {
-            error!("Error reading version file: {}", e);
-            HttpResponse::NotFound()
-                .content_type("text/plain")
-                .body(format!("Version file not found: {}", e))
+            error!("Failed to read version file {}: {}", file_path.display(), e);
+            HttpResponse::InternalServerError().body(format!("Error reading version file: {}", e))
         }
     }
 }
@@ -1015,104 +956,26 @@ async fn proxy_download_request(extension_id: String) -> HttpResponse {
 // Serve release files through the API path: /api/releases/{channel}/{version}/{asset}-{os}-{arch}.gz
 async fn serve_release_api(
     path: web::Path<(String, String, String)>,
-    query: web::Query<std::collections::HashMap<String, String>>,
     data: web::Data<ServerData>,
 ) -> impl Responder {
-    let (channel, version, filename) = path.into_inner();
+    let (channel, version, asset) = path.into_inner();
+
+    info!("Serving release API request: channel={}, version={}, asset={}", 
+           channel, version, asset);
     
-    // Check for update param
-    let update = query.get("update").is_some();
-    
-    info!("API request for release file: channel={}, version={}, filename={}, update={}", 
-          channel, version, filename, update);
-    
+
     if let Some(releases_dir) = &data.config.releases_dir {
-        // Parse the filename to extract asset, os, and arch
-        let parts: Vec<&str> = filename.split('-').collect();
-        if parts.len() >= 3 {
-            let asset = parts[0].to_string();
-            
-            // For filenames like zed-remote-server-linux-x86_64.gz
-            // we need to handle the hyphenated asset name
-            let asset_dir = if asset == "zed" || releases_dir.join(&asset).exists() {
-                releases_dir.join(&asset)
-            } else if asset == "zed" && parts.get(1) == Some(&"remote") && parts.get(2) == Some(&"server") {
-                // Handle zed-remote-server as a special case
-                releases_dir.join("zed-remote-server")
-            } else {
-                // Try to reconstruct multi-part asset names (like zed-remote-server)
-                let potential_assets = (1..parts.len()-1).map(|i| {
-                    parts[0..i+1].join("-")
-                }).collect::<Vec<_>>();
-                
-                let found_asset = potential_assets.iter()
-                    .find(|a| releases_dir.join(a).exists())
-                    .cloned();
-                
-                if let Some(asset_name) = found_asset {
-                    releases_dir.join(asset_name)
-                } else {
-                    releases_dir.join(&asset)
-                }
-            };
-            
-            // Look for the file in the asset directory with the specific version
-            let file_path = asset_dir.join(&filename);
-            
-            if file_path.exists() {
-                debug!("Found release file at {:?}", file_path);
-                return serve_release_file(&file_path);
-            } else {
-                // If file doesn't exist, check if we should serve a different file based on pattern matching
-                if let Ok(entries) = fs::read_dir(&asset_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        let entry_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                        
-                        // Check if this is an actual file that matches our version
-                        if path.is_file() && entry_name.contains(&version) {
-                            debug!("Found alternate release file: {:?}", path);
-                            return serve_release_file(&path);
-                        }
-                    }
-                }
-            }
-        }
-        
-        // If we get here, we couldn't find a matching file
-        if data.config.proxy_mode {
-            // Proxy the request to zed.dev
-            let url = format!("https://zed.dev/api/releases/{}/{}/{}{}",
-                channel, version, filename,
-                if update { "?update=1" } else { "" }
-            );
-            
-            info!("Proxying release file request to: {}", url);
-            
-            match reqwest::Client::new().get(&url).send().await {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        match response.bytes().await {
-                            Ok(bytes) => {
-                                return HttpResponse::Ok()
-                                    .content_type("application/octet-stream")
-                                    .body(bytes);
-                            },
-                            Err(e) => {
-                                error!("Error reading proxied file: {}", e);
-                            }
-                        }
-                    } else {
-                        warn!("Proxy request failed with status: {}", response.status());
-                    }
-                },
-                Err(e) => {
-                    error!("Error proxying file request: {}", e);
-                }
-            }
+        // Construct the expected file path
+        let file_path = releases_dir.join(format!("{version}/{asset}"));
+
+        info!("Looking for release file at: {:?}", file_path);
+
+        if file_path.exists() {
+            return serve_release_file(&file_path);
+        } else {
+            info!("Release file not found: {:?}", file_path);
         }
     }
-    
-    HttpResponse::NotFound()
-        .body(format!("Release file not found: {}/{}/{}", channel, version, filename))
+
+    HttpResponse::NotFound().body(format!("Release file not found for {} {} {}", channel, version, asset))
 }

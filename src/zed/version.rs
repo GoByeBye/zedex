@@ -5,10 +5,8 @@ use std::fmt;
 /// Represents a Zed release version
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Version {
-    pub version: String,
     pub url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_url: Option<String>,
+    pub version: String,
 }
 
 impl Version {

@@ -9,7 +9,7 @@ pub use extension::Extension;
 pub use extension::extensions_utils;
 pub use version::Version;
 pub use local_server::{LocalServer, ServerConfig};
-pub use downloader::{download_extensions, download_extension_by_id, download_extension_index, DownloadOptions};
+pub use downloader::{download_extensions, download_extension_by_id, download_extension_index, download_zed_release, DownloadOptions};
 
 use anyhow::Result;
 use log::{debug, info, error};
@@ -22,8 +22,6 @@ pub struct Client {
     host: String,
     max_schema_version: i32,
     extensions_local_dir: Option<String>,
-    platform_os: Option<String>,
-    platform_arch: Option<String>,
     http_client: Arc<reqwest::Client>,
 }
 
@@ -46,8 +44,6 @@ impl Client {
             host: std::env::var("ZED_HOST").unwrap_or_else(|_| "https://zed.dev".to_string()),
             max_schema_version: 1, // Default max schema version
             extensions_local_dir: None,
-            platform_os: None,
-            platform_arch: None,
             http_client: Arc::new(http_client),
         }
     }
