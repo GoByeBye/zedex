@@ -58,12 +58,6 @@ impl Client {
         self
     }
 
-    /// Set the platform OS and architecture 
-    pub fn with_platform(mut self, os: String, arch: String) -> Self {
-        self.platform_os = Some(os);
-        self.platform_arch = Some(arch);
-        self
-    }
 
     /// Get the current extensions index, optionally filtering by a capability
     pub async fn get_extensions_index(&self, provides: Option<&str>) -> Result<Extensions> {
