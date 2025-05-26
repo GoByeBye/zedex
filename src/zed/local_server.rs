@@ -122,10 +122,9 @@ impl LocalServer {
             // Add static file serving for releases if directory is configured
             if let Some(releases_dir) = &config.releases_dir {
                 if releases_dir.exists() {
-                    // Standard release file serving
+                    // Standard release file serving (without show_files_listing to avoid read-only issues)
                     app = app.service(
                         Files::new("/releases", releases_dir)
-                            .show_files_listing()
                     );
                     
                     // Add direct API route for release files
@@ -139,10 +138,9 @@ impl LocalServer {
             // API proxy should come after specific routes but before generic file serving
             app = app.service(web::resource("/api/{path:.*}").to(proxy_api_request));
             
-            // Extensions archive comes last as it's the most generic
+            // Extensions archive comes last as it's the most generic (without show_files_listing to avoid read-only issues)
             app = app.service(
                 Files::new("/extensions-archive", &config.extensions_dir)
-                    .show_files_listing()
             );
             
             app
