@@ -724,6 +724,13 @@ async fn check_extension_updates(
         Vec::new()
     };
     
+    // If ids parameter is empty (meaning no extensions are installed), 
+    // we should return an empty list immediately
+    if ids_param.is_empty() {
+        info!("No extensions to check for updates (empty ids parameter)");
+        return HttpResponse::Ok().json(WrappedExtensions { data: Vec::new() });
+    }
+    
     debug!("Extension update check: min_schema={:?}, max_schema={:?}, min_wasm_api={:?}, max_wasm_api={:?}, ids={:?}",
         min_schema_version, max_schema_version, min_wasm_api_version, max_wasm_api_version, extension_ids);
     
