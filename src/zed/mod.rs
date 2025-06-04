@@ -3,6 +3,7 @@ mod error;
 mod version;
 mod local_server;
 mod downloader;
+mod health;
 
 pub use extension::{Extensions, WrappedExtensions, ExtensionVersionTracker};
 pub use extension::Extension;
