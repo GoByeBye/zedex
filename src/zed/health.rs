@@ -2,6 +2,7 @@ use actix_web::{HttpResponse, Responder};
 use log::debug;
 use serde::{Serialize, Deserialize};
 use std::time::{SystemTime, UNIX_EPOCH};
+use once_cell::sync::OnceCell;
 
 /// Health check response structure
 #[derive(Serialize, Deserialize)]
@@ -20,35 +21,27 @@ pub struct HealthResponse {
     extensions_loaded: u64,
 }
 
+
 /// Server uptime tracking
-static mut SERVER_START_TIME: Option<u64> = None;
+static SERVER_START_TIME: OnceCell<u64> = OnceCell::new();
 
 /// Initialize the health check module
 pub fn init() {
-    unsafe {
-        // Store the current time as the server start time
-        SERVER_START_TIME = Some(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        );
-    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    SERVER_START_TIME.set(now).ok();
 }
 
 /// Get the server start time
 fn get_start_time() -> u64 {
-    unsafe {
-        SERVER_START_TIME.unwrap_or_else(|| {
-            // If not initialized, initialize now
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            SERVER_START_TIME = Some(now);
-            now
-        })
-    }
+    *SERVER_START_TIME.get_or_init(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    })
 }
 
 /// Health check handler that returns service status in JSON format
