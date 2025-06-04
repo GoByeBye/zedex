@@ -105,7 +105,7 @@ impl LocalServer {
             let mut app = App::new()
                 .app_data(server_data.clone())
                 .wrap(Logger::default())
-                .service(web::resource("/healthy").to(crate::zed::health::health_check))
+                .service(web::resource(HEALTH_CHECK_PATH).to(crate::zed::health::health_check))
                 .service(web::resource("/extensions").to(get_extensions_index))
                 .service(web::resource("/extensions/updates").to(check_extension_updates))
                 .service(web::resource("/extensions/{id}/download").to(download_extension))
