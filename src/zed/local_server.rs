@@ -54,7 +54,7 @@ impl LocalServer {
         
         info!("Starting local Zed extension server on {}:{}", config.host, config.port);
         info!("Serving extensions from {:?}", config.extensions_dir);
-        info!("Health check available at http://{}:{}/{}", config.host, config.port, HEALTH_CHECK_PATH);
+        info!("Health check available at http://{}:{}{}", config.host, config.port, HEALTH_CHECK_PATH);
         if let Some(releases_dir) = &config.releases_dir {
             info!("Serving releases from {:?}", releases_dir);
             
