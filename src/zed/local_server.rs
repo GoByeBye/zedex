@@ -47,13 +47,14 @@ impl LocalServer {
         let server_data = web::Data::new(ServerData {
             config: config.clone(),
         });
+        static HEALTH_CHECK_PATH: &str = "/health";
         
         // Initialize health check module
         health::init();
         
         info!("Starting local Zed extension server on {}:{}", config.host, config.port);
         info!("Serving extensions from {:?}", config.extensions_dir);
-        info!("Health check available at http://{}:{}/healthy", config.host, config.port);
+        info!("Health check available at http://{}:{}/{}", config.host, config.port, HEALTH_CHECK_PATH);
         if let Some(releases_dir) = &config.releases_dir {
             info!("Serving releases from {:?}", releases_dir);
             
