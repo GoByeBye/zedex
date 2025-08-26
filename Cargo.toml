@@ -12,7 +12,7 @@ thiserror = "2.0"
 tokio = { version = "1.47", features = ["full"] }
 clap = { version = "4.5", features = ["derive"] }
 dirs = "6.0"
-url = "2.4"
+url = "2.5"
 futures-util = "0.3"
 actix-web = "4.11"
 actix-files = "0.6"
