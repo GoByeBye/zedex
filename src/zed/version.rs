@@ -16,28 +16,26 @@ impl Version {
         if parts.len() < 3 {
             return None;
         }
-        
+
         let major = parts[0].parse::<u32>().ok()?;
         let minor = parts[1].parse::<u32>().ok()?;
         let patch = parts[2].parse::<u32>().ok()?;
-        
+
         Some((major, minor, patch))
     }
-    
+
     /// Compare version semantically
     pub fn compare(&self, other: &Version) -> Ordering {
         match (self.parse_semver(), other.parse_semver()) {
-            (Some((self_major, self_minor, self_patch)), 
-             Some((other_major, other_minor, other_patch))) => {
-                match self_major.cmp(&other_major) {
-                    Ordering::Equal => {
-                        match self_minor.cmp(&other_minor) {
-                            Ordering::Equal => self_patch.cmp(&other_patch),
-                            ordering => ordering,
-                        }
-                    },
+            (
+                Some((self_major, self_minor, self_patch)),
+                Some((other_major, other_minor, other_patch)),
+            ) => match self_major.cmp(&other_major) {
+                Ordering::Equal => match self_minor.cmp(&other_minor) {
+                    Ordering::Equal => self_patch.cmp(&other_patch),
                     ordering => ordering,
-                }
+                },
+                ordering => ordering,
             },
             _ => self.version.cmp(&other.version),
         }
@@ -68,4 +66,4 @@ impl Ord for Version {
     fn cmp(&self, other: &Self) -> Ordering {
         self.compare(other)
     }
-} 
+}

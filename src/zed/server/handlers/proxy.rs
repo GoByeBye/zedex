@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use actix_web::{http, web, HttpResponse, Responder};
+use actix_web::{HttpResponse, Responder, http, web};
 use log::{debug, error, trace, warn};
 
 use super::super::state::ServerState;
@@ -32,9 +32,11 @@ pub async fn proxy_api_request(
             let filename = parts[3];
 
             if let Some(releases_dir) = &state.config.releases_dir {
-                let zed_path = releases_dir
-                    .join("zed")
-                    .join(format!("zed-{}-{}.gz", version, filename.replace(".tar.gz", "")));
+                let zed_path = releases_dir.join("zed").join(format!(
+                    "zed-{}-{}.gz",
+                    version,
+                    filename.replace(".tar.gz", "")
+                ));
                 if zed_path.exists() {
                     return serve_release_file(&zed_path);
                 }
@@ -75,10 +77,8 @@ pub async fn proxy_api_request(
         Ok(client) => client,
         Err(e) => {
             error!("Error creating HTTP client: {}", e);
-            return HttpResponse::InternalServerError().body(format!(
-                "Error creating HTTP client: {}",
-                e
-            ));
+            return HttpResponse::InternalServerError()
+                .body(format!("Error creating HTTP client: {}", e));
         }
     };
     let mut url = format!("https://zed.dev/api/{}", path_str);
@@ -113,8 +113,7 @@ pub async fn proxy_api_request(
             debug!("Response size: {} bytes", body.len());
 
             HttpResponse::build(
-                http::StatusCode::from_u16(status.as_u16())
-                    .unwrap_or(http::StatusCode::OK),
+                http::StatusCode::from_u16(status.as_u16()).unwrap_or(http::StatusCode::OK),
             )
             .content_type(content_type)
             .body(body)
@@ -126,19 +125,15 @@ pub async fn proxy_api_request(
     }
 }
 
-pub async fn proxy_extensions_updates(
-    query: web::Query<HashMap<String, String>>,
-) -> HttpResponse {
+pub async fn proxy_extensions_updates(query: web::Query<HashMap<String, String>>) -> HttpResponse {
     debug!("Proxying extension updates request to api.zed.dev");
 
     let client = match reqwest::Client::builder().user_agent("zedex").build() {
         Ok(client) => client,
         Err(e) => {
             error!("Error creating HTTP client: {}", e);
-            return HttpResponse::InternalServerError().body(format!(
-                "Error creating HTTP client: {}",
-                e
-            ));
+            return HttpResponse::InternalServerError()
+                .body(format!("Error creating HTTP client: {}", e));
         }
     };
 
@@ -159,7 +154,9 @@ pub async fn proxy_extensions_updates(
     match client.get(&url).send().await {
         Ok(response) => match response.error_for_status() {
             Ok(response) => match response.bytes().await {
-                Ok(bytes) => HttpResponse::Ok().content_type("application/json").body(bytes),
+                Ok(bytes) => HttpResponse::Ok()
+                    .content_type("application/json")
+                    .body(bytes),
                 Err(e) => {
                     error!("Error reading proxied response: {}", e);
                     HttpResponse::InternalServerError()
@@ -224,7 +221,10 @@ pub async fn proxy_extension_versions(extension_id: String) -> HttpResponse {
 }
 
 pub async fn proxy_download_request(extension_id: String) -> HttpResponse {
-    let url = format!("https://api.zed.dev/extensions/{}/download?min_schema_version=0&max_schema_version=100&min_wasm_api_version=0.0.0&max_wasm_api_version=100.0.0", extension_id);
+    let url = format!(
+        "https://api.zed.dev/extensions/{}/download?min_schema_version=0&max_schema_version=100&min_wasm_api_version=0.0.0&max_wasm_api_version=100.0.0",
+        extension_id
+    );
     debug!("Proxying extension download request to: {}", url);
 
     let client = reqwest::Client::new();
@@ -260,10 +260,7 @@ pub async fn proxy_download_request(extension_id: String) -> HttpResponse {
     }
 }
 
-pub async fn proxy_download_version_request(
-    extension_id: String,
-    version: String,
-) -> HttpResponse {
+pub async fn proxy_download_version_request(extension_id: String, version: String) -> HttpResponse {
     let url = format!(
         "https://api.zed.dev/extensions/{}/{}/download",
         extension_id, version

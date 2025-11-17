@@ -4,10 +4,10 @@ mod state;
 
 pub use config::ServerConfig;
 
-use anyhow::Result;
-use actix_files::Files;
-use actix_web::{middleware::Logger, web, App, HttpServer};
 use super::health;
+use actix_files::Files;
+use actix_web::{App, HttpServer, middleware::Logger, web};
+use anyhow::Result;
 use handlers::{extensions, proxy, releases};
 use log::{info, warn};
 use state::ServerState;
@@ -107,10 +107,7 @@ fn log_server_banner(config: &ServerConfig, health_path: &str) -> Result<()> {
                                 }
                                 info!(
                                     "    - {}",
-                                    file_path
-                                        .file_name()
-                                        .unwrap_or_default()
-                                        .to_string_lossy()
+                                    file_path.file_name().unwrap_or_default().to_string_lossy()
                                 );
                             }
                         }

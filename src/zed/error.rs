@@ -13,4 +13,4 @@ pub enum ZedError {
 
     #[error("Invalid URL: {0}")]
     UrlParseError(#[from] url::ParseError),
-} 
+}

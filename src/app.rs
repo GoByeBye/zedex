@@ -5,7 +5,7 @@ use crate::{
 use anyhow::Result;
 use clap::Parser;
 use env_logger::Builder;
-use log::{debug, info, LevelFilter};
+use log::{LevelFilter, debug, info};
 use std::io::Write;
 
 pub async fn run() -> Result<()> {
@@ -68,9 +68,7 @@ fn init_logging(log_level: &str, log_timestamp: bool) {
             )
         });
     } else {
-        builder.format(|buf, record| {
-            writeln!(buf, "[{}] - {}", record.level(), record.args())
-        });
+        builder.format(|buf, record| writeln!(buf, "[{}] - {}", record.level(), record.args()));
     }
 
     // It's OK if init() fails because it was already initialized in tests.

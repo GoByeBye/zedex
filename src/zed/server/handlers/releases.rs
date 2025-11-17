@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use actix_files::Files;
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{HttpResponse, Responder, web};
 use log::{debug, error, info, warn};
 
 use crate::zed::Version;
@@ -12,12 +12,9 @@ use super::super::state::ServerState;
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(web::resource("/api/releases/latest").to(get_latest_version))
+        .service(web::resource("/api/releases/{channel}/latest").to(get_latest_version))
         .service(
-            web::resource("/api/releases/{channel}/latest").to(get_latest_version),
-        )
-        .service(
-            web::resource("/api/releases/{channel}/{version}/{filename}")
-                .to(serve_release_api),
+            web::resource("/api/releases/{channel}/{version}/{filename}").to(serve_release_api),
         );
 }
 
@@ -30,7 +27,10 @@ pub async fn get_latest_version(
     state: web::Data<ServerState>,
     query: web::Query<HashMap<String, String>>,
 ) -> impl Responder {
-    let os = query.get("os").cloned().unwrap_or_else(|| "macos".to_string());
+    let os = query
+        .get("os")
+        .cloned()
+        .unwrap_or_else(|| "macos".to_string());
     let arch = query
         .get("arch")
         .cloned()
@@ -69,10 +69,12 @@ pub async fn get_latest_version(
             return super::proxy::proxy_version_request(os, arch, asset).await;
         }
 
-        HttpResponse::NotFound().content_type("text/plain").body(format!(
-            "Version file not found for asset {} on platform {}-{}",
-            asset, os, arch
-        ))
+        HttpResponse::NotFound()
+            .content_type("text/plain")
+            .body(format!(
+                "Version file not found for asset {} on platform {}-{}",
+                asset, os, arch
+            ))
     } else {
         HttpResponse::NotFound()
             .content_type("text/plain")

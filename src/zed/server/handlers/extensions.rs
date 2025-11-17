@@ -1,10 +1,10 @@
 use std::{collections::HashMap, fs};
 
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{HttpResponse, Responder, web};
 use log::{debug, error, info, warn};
 use semver::Version as SemverVersion;
 
-use crate::zed::{extensions_utils, WrappedExtensions};
+use crate::zed::{WrappedExtensions, extensions_utils};
 
 use super::super::state::ServerState;
 use super::proxy::{
@@ -33,12 +33,8 @@ fn filter_extensions_with_params(
     provides: Option<&str>,
     extension_ids: Option<&[&str]>,
 ) -> crate::zed::Extensions {
-    let filtered_by_standard = extensions_utils::filter_extensions(
-        &extensions.data,
-        filter,
-        max_schema_version,
-        provides,
-    );
+    let filtered_by_standard =
+        extensions_utils::filter_extensions(&extensions.data, filter, max_schema_version, provides);
 
     let filtered_by_min_schema = if let Some(min_version) = min_schema_version {
         filtered_by_standard
@@ -154,7 +150,10 @@ pub async fn download_extension(
     let ext_dir = state.config.extensions_dir.join(&id);
 
     let latest_file_path = ext_dir.join(format!("{}.tgz", id));
-    debug!("Checking for latest version: {}", latest_file_path.display());
+    debug!(
+        "Checking for latest version: {}",
+        latest_file_path.display()
+    );
 
     if let Ok(bytes) = fs::read(&latest_file_path) {
         info!("Serving latest version for {}", id);
@@ -167,7 +166,10 @@ pub async fn download_extension(
         let versions_file = ext_dir.join("versions.json");
 
         if versions_file.exists() {
-            debug!("Looking for highest available version in {}", versions_file.display());
+            debug!(
+                "Looking for highest available version in {}",
+                versions_file.display()
+            );
 
             if let Ok(content) = fs::read_to_string(&versions_file) {
                 if let Ok(versions) = serde_json::from_str::<WrappedExtensions>(&content) {
@@ -217,10 +219,7 @@ pub async fn download_extension(
         }
     }
 
-    let old_path = state
-        .config
-        .extensions_dir
-        .join(format!("{}.tar.gz", id));
+    let old_path = state.config.extensions_dir.join(format!("{}.tar.gz", id));
     debug!("Checking old structure: {}", old_path.display());
 
     if let Ok(bytes) = fs::read(&old_path) {
@@ -252,10 +251,16 @@ pub async fn download_extension_with_version(
     let ext_dir = state.config.extensions_dir.join(&id);
     let versioned_file_path = ext_dir.join(format!("{}-{}.tgz", id, version));
 
-    debug!("Looking for versioned extension at {:?}", versioned_file_path);
+    debug!(
+        "Looking for versioned extension at {:?}",
+        versioned_file_path
+    );
     match fs::read(&versioned_file_path) {
         Ok(bytes) => {
-            info!("Successfully served extension archive: {} version {}", id, version);
+            info!(
+                "Successfully served extension archive: {} version {}",
+                id, version
+            );
             HttpResponse::Ok()
                 .content_type("application/gzip")
                 .body(bytes)
@@ -268,7 +273,10 @@ pub async fn download_extension_with_version(
                 );
                 proxy_download_version_request(id, version).await
             } else {
-                error!("Extension version file not found: {} version {}", id, version);
+                error!(
+                    "Extension version file not found: {} version {}",
+                    id, version
+                );
                 HttpResponse::NotFound()
                     .body(format!("Extension version archive not found: {}", version))
             }
@@ -351,7 +359,11 @@ pub async fn check_extension_updates(
 
     debug!(
         "Extension update check: min_schema={:?}, max_schema={:?}, min_wasm_api={:?}, max_wasm_api={:?}, ids={:?}",
-        min_schema_version, max_schema_version, min_wasm_api_version, max_wasm_api_version, extension_ids
+        min_schema_version,
+        max_schema_version,
+        min_wasm_api_version,
+        max_wasm_api_version,
+        extension_ids
     );
 
     let extensions_file = state.config.extensions_dir.join("extensions.json");

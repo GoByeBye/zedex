@@ -1,8 +1,8 @@
 use crate::{
     cli::GetTarget,
     zed::{
-        download_extension_by_id, download_extension_index, download_extensions, Client,
-        DownloadOptions, Extension, ExtensionVersionTracker, WrappedExtensions,
+        Client, DownloadOptions, Extension, ExtensionVersionTracker, WrappedExtensions,
+        download_extension_by_id, download_extension_index, download_extensions,
     },
 };
 use anyhow::Result;
@@ -26,14 +26,7 @@ pub async fn run(target: GetTarget, root_dir: PathBuf) -> Result<()> {
             all_versions,
             rate_limit,
         } => {
-            handle_all_extensions(
-                output_dir,
-                root_dir,
-                async_mode,
-                all_versions,
-                rate_limit,
-            )
-            .await
+            handle_all_extensions(output_dir, root_dir, async_mode, all_versions, rate_limit).await
         }
     }
 }
@@ -44,7 +37,11 @@ async fn handle_extension_index(root_dir: PathBuf, provides: Vec<String>) -> Res
     Ok(())
 }
 
-async fn handle_extension(ids: Vec<String>, output_dir: Option<PathBuf>, root_dir: PathBuf) -> Result<()> {
+async fn handle_extension(
+    ids: Vec<String>,
+    output_dir: Option<PathBuf>,
+    root_dir: PathBuf,
+) -> Result<()> {
     let output_dir = resolve_output_dir(output_dir, &root_dir);
     fs::create_dir_all(&output_dir)?;
 
@@ -144,10 +141,7 @@ fn load_version_tracker(output_dir: &Path) -> ExtensionVersionTracker {
     ExtensionVersionTracker::new()
 }
 
-fn persist_version_tracker(
-    output_dir: &Path,
-    tracker: &ExtensionVersionTracker,
-) -> Result<()> {
+fn persist_version_tracker(output_dir: &Path, tracker: &ExtensionVersionTracker) -> Result<()> {
     let version_tracker_file = output_dir.join("version_tracker.json");
     let version_tracker_json = serde_json::to_string_pretty(tracker)?;
     fs::write(&version_tracker_file, version_tracker_json)?;

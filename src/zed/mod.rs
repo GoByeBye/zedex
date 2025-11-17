@@ -8,8 +8,8 @@ mod version;
 
 pub use client::Client;
 pub use downloader::{
-    download_extension_by_id, download_extension_index, download_extensions, download_zed_release,
-    DownloadOptions,
+    DownloadOptions, download_extension_by_id, download_extension_index, download_extensions,
+    download_zed_release,
 };
 pub use error::ZedError;
 pub use extension::extensions_utils;

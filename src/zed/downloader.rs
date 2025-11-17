@@ -38,17 +38,21 @@ pub async fn download_extensions(
     options: DownloadOptions,
 ) -> Result<ExtensionVersionTracker> {
     let output_dir = output_dir.as_ref().to_path_buf();
-    
+
     info!(
-        "Downloading {} extensions{}...", 
-        extensions.len(), 
-        if options.all_versions { " (all versions)" } else { " (latest version only)" }
+        "Downloading {} extensions{}...",
+        extensions.len(),
+        if options.all_versions {
+            " (all versions)"
+        } else {
+            " (latest version only)"
+        }
     );
-    
+
     if options.async_mode {
         // Fully asynchronous mode - no throttling
         info!("Using fully asynchronous mode - be careful of rate limiting!");
-        
+
         // Download each extension without throttling
         let futures = extensions.iter().map(|extension| {
             download_extension(
@@ -60,51 +64,54 @@ pub async fn download_extensions(
                 version_tracker.clone(),
             )
         });
-        
+
         // Wait for all downloads to complete (fully parallel)
         let results = future::join_all(futures).await;
-        
+
         // Merge all trackers
         for result in results {
             if let Ok(tracker) = result {
                 version_tracker.merge(tracker);
             }
-        }    } else {
+        }
+    } else {
         // Throttled mode - default safe behavior
         info!("Using throttled download mode to avoid rate limiting");
-        
+
         // Create a semaphore to limit concurrent downloads
         const MAX_CONCURRENT_DOWNLOADS: usize = 1;
         let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
-        
+
         // Download each extension with throttling
         let mut handles = Vec::new();
-        
+
         for extension in extensions.iter() {
             let ext_client = client.clone();
             let ext_output_dir = output_dir.clone();
-            let semaphore = semaphore.clone();            let extension_clone = extension.clone();
+            let semaphore = semaphore.clone();
+            let extension_clone = extension.clone();
             let all_versions = options.all_versions;
             let rate_limit = options.rate_limit;
             let tracker = version_tracker.clone();
-            
+
             let handle = tokio::spawn(async move {
                 // Acquire a permit from the semaphore (this limits concurrency)
                 let _permit = semaphore.acquire().await.unwrap();
-                
+
                 download_extension(
-                    extension_clone, 
-                    ext_client, 
-                    ext_output_dir, 
-                    all_versions, 
-                    rate_limit, 
+                    extension_clone,
+                    ext_client,
+                    ext_output_dir,
+                    all_versions,
+                    rate_limit,
                     tracker,
-                ).await
+                )
+                .await
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Wait for all downloads to complete
         for handle in handles {
             if let Ok(Ok(tracker)) = handle.await {
@@ -112,7 +119,7 @@ pub async fn download_extensions(
             }
         }
     }
-    
+
     Ok(version_tracker)
 }
 
@@ -127,7 +134,7 @@ async fn download_extension(
 ) -> Result<ExtensionVersionTracker> {
     let output_dir = output_dir.as_ref().to_path_buf();
     let id = extension.id.clone();
-    
+
     // Create extension-specific directory
     let ext_dir = output_dir.join(&id);
     if !ext_dir.exists() {
@@ -136,64 +143,87 @@ async fn download_extension(
             return Ok(version_tracker);
         }
     }
-    
+
     if all_versions {
         // Fetch all versions of this extension
         let versions = client.get_extension_versions(&id).await?;
-        
+
         // Save versions metadata
         let versions_file = ext_dir.join("versions.json");
-        let versions_json = serde_json::to_string_pretty(&WrappedExtensions { data: versions.clone() })?;
+        let versions_json = serde_json::to_string_pretty(&WrappedExtensions {
+            data: versions.clone(),
+        })?;
         fs::write(&versions_file, versions_json)?;
-        
+
         // Download each version
         for version in versions.iter() {
             let file_path = ext_dir.join(format!("{}-{}.tgz", id, version.version));
-            
+
             // Skip if already downloaded
             if file_path.exists() {
-                debug!("Extension {} version {} already downloaded, skipping", id, version.version);
+                debug!(
+                    "Extension {} version {} already downloaded, skipping",
+                    id, version.version
+                );
                 // Update version tracker
                 version_tracker.update_extension(version);
                 continue;
             }
-            
+
             info!("Downloading extension: {} version {}", id, version.version);
-            
+
             // Create a progress bar for this download
             let pb = Arc::new(ProgressBar::new(0));
             pb.set_style(ProgressStyle::default_bar()
                 .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
                 .unwrap()
                 .progress_chars("#>-"));
-            
+
             let pb_clone = pb.clone();
-            match client.download_extension_version_with_progress(&id, &version.version, 
-                move |downloaded, total| {
-                    pb_clone.set_length(total);
-                    pb_clone.set_position(downloaded);
-                }).await {
+            match client
+                .download_extension_version_with_progress(
+                    &id,
+                    &version.version,
+                    move |downloaded, total| {
+                        pb_clone.set_length(total);
+                        pb_clone.set_position(downloaded);
+                    },
+                )
+                .await
+            {
                 Ok(bytes) => {
                     pb.finish_with_message(format!("Downloaded {} v{}", id, version.version));
                     match std::fs::write(&file_path, bytes) {
                         Ok(_) => {
-                            info!("Successfully downloaded extension: {} version {} to {:?}", id, version.version, file_path);
+                            info!(
+                                "Successfully downloaded extension: {} version {} to {:?}",
+                                id, version.version, file_path
+                            );
                             // Update version tracker
                             version_tracker.update_extension(version);
-                        },
+                        }
                         Err(e) => error!("Failed to write extension file {}: {}", id, e),
                     }
-                },
+                }
                 Err(e) => {
-                    pb.finish_with_message(format!("Failed to download {} v{}", id, version.version));
+                    pb.finish_with_message(format!(
+                        "Failed to download {} v{}",
+                        id, version.version
+                    ));
                     if let Some(err) = e.downcast_ref::<reqwest::Error>() {
-                        error!("Failed to download extension {} version {}: {}", id, version.version, err);
+                        error!(
+                            "Failed to download extension {} version {}: {}",
+                            id, version.version, err
+                        );
                     } else {
-                        error!("Failed to download extension {} version {}: {}", id, version.version, e);
+                        error!(
+                            "Failed to download extension {} version {}: {}",
+                            id, version.version, e
+                        );
                     }
-                },
+                }
             }
-            
+
             // Apply rate limiting between downloads
             if rate_limit > 0 {
                 tokio::time::sleep(Duration::from_secs(rate_limit)).await;
@@ -202,39 +232,51 @@ async fn download_extension(
     } else {
         // Download only the latest version
         let file_path = ext_dir.join(format!("{}.tgz", id));
-        
+
         // Skip if already downloaded and version hasn't changed
         if file_path.exists() && !version_tracker.has_newer_version(&extension) {
-            debug!("Extension {} latest version already downloaded, skipping", id);
+            debug!(
+                "Extension {} latest version already downloaded, skipping",
+                id
+            );
             return Ok(version_tracker);
         }
-        
+
         info!("Downloading extension: {}", id);
-        
+
         // Create a progress bar for this download
         let pb = Arc::new(ProgressBar::new(0));
         pb.set_style(ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
             .unwrap()
             .progress_chars("#>-"));
-        
+
         let pb_clone = pb.clone();
-        match client.download_extension_version_with_progress(&id, &extension.version, 
-            move |downloaded, total| {
-                pb_clone.set_length(total);
-                pb_clone.set_position(downloaded);
-            }).await {
+        match client
+            .download_extension_version_with_progress(
+                &id,
+                &extension.version,
+                move |downloaded, total| {
+                    pb_clone.set_length(total);
+                    pb_clone.set_position(downloaded);
+                },
+            )
+            .await
+        {
             Ok(bytes) => {
                 pb.finish_with_message(format!("Downloaded {}", id));
                 match std::fs::write(&file_path, bytes) {
                     Ok(_) => {
-                        info!("Successfully downloaded extension: {} to {:?}", id, file_path);
+                        info!(
+                            "Successfully downloaded extension: {} to {:?}",
+                            id, file_path
+                        );
                         // Update version tracker
                         version_tracker.update_extension(&extension);
-                    },
+                    }
                     Err(e) => error!("Failed to write extension file {}: {}", id, e),
                 }
-            },
+            }
             Err(e) => {
                 pb.finish_with_message(format!("Failed to download {}", id));
                 if let Some(err) = e.downcast_ref::<reqwest::Error>() {
@@ -242,28 +284,31 @@ async fn download_extension(
                 } else {
                     error!("Failed to download extension {}: {}", id, e);
                 }
-            },
+            }
         }
     }
-    
+
     Ok(version_tracker)
 }
 
 /// Downloads a single extension by ID
 pub async fn download_extension_by_id(
-    id: &str, 
-    client: Client, 
+    id: &str,
+    client: Client,
     output_dir: impl AsRef<Path>,
     extensions: &[Extension],
 ) -> Result<()> {
     let output_dir = output_dir.as_ref().to_path_buf();
-    
+
     // Find the extension in the index to get its metadata
     let extension = extensions.iter().find(|e| e.id == id);
-    
+
     if let Some(extension) = extension {
-        info!("Downloading extension: {} (version {})", id, extension.version);
-        
+        info!(
+            "Downloading extension: {} (version {})",
+            id, extension.version
+        );
+
         // Create extension-specific directory
         let ext_dir = output_dir.join(id);
         if !ext_dir.exists() {
@@ -272,29 +317,38 @@ pub async fn download_extension_by_id(
                 return Ok(());
             }
         }
-        
+
         // Create a progress bar for this download
         let pb = Arc::new(ProgressBar::new(0));
         pb.set_style(ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
             .unwrap()
             .progress_chars("#>-"));
-        
+
         let pb_clone = pb.clone();
         let file_path = ext_dir.join(format!("{}.tgz", id));
-        
-        match client.download_extension_version_with_progress(id, &extension.version, 
-            move |downloaded, total| {
-                pb_clone.set_length(total);
-                pb_clone.set_position(downloaded);
-            }).await {
+
+        match client
+            .download_extension_version_with_progress(
+                id,
+                &extension.version,
+                move |downloaded, total| {
+                    pb_clone.set_length(total);
+                    pb_clone.set_position(downloaded);
+                },
+            )
+            .await
+        {
             Ok(bytes) => {
                 pb.finish_with_message(format!("Downloaded {}", id));
                 match std::fs::write(&file_path, bytes) {
-                    Ok(_) => info!("Successfully downloaded extension: {} to {:?}", id, file_path),
+                    Ok(_) => info!(
+                        "Successfully downloaded extension: {} to {:?}",
+                        id, file_path
+                    ),
                     Err(e) => error!("Failed to write extension file {}: {}", id, e),
                 }
-            },
+            }
             Err(e) => {
                 pb.finish_with_message(format!("Failed to download {}", id));
                 if let Some(err) = e.downcast_ref::<reqwest::Error>() {
@@ -302,12 +356,12 @@ pub async fn download_extension_by_id(
                 } else {
                     error!("Failed to download extension {}: {}", id, e);
                 }
-            },
+            }
         }
     } else {
         error!("Extension {} not found in index", id);
     }
-    
+
     Ok(())
 }
 
@@ -315,11 +369,11 @@ pub async fn download_extension_by_id(
 pub async fn download_extension_index(
     client: &Client,
     root_dir: impl AsRef<Path>,
-    provides: &[String]
+    provides: &[String],
 ) -> Result<Vec<Extension>> {
     let root_dir = root_dir.as_ref();
     let mut map: HashMap<String, Extension> = HashMap::new();
-    
+
     // Fetch and merge extension lists, deduplicating by id
     if provides.is_empty() {
         // Initial fetch to discover all provides capabilities
@@ -351,20 +405,22 @@ pub async fn download_extension_index(
             }
         }
     }
-    
+
     let mut extensions: Vec<Extension> = map.into_values().collect();
     // Sort extensions by download count (highest first)
     extensions.sort_by(|a, b| b.download_count.cmp(&a.download_count));
     info!("Found {} extensions", extensions.len());
-    
+
     // Save extensions to file
     std::fs::create_dir_all(root_dir)?;
     let extension_path = root_dir.join("extensions.json");
-    let wrapped = WrappedExtensions { data: extensions.clone() };
+    let wrapped = WrappedExtensions {
+        data: extensions.clone(),
+    };
     let json = serde_json::to_string_pretty(&wrapped)?;
     std::fs::write(&extension_path, json)?;
     info!("Saved extension index to {:?}", extension_path);
-    
+
     Ok(extensions)
 }
 
@@ -381,14 +437,13 @@ pub async fn download_zed_release(client: &Client, root_dir: impl AsRef<Path>) {
         ("zed", "macos", "aarch64"),
     ];
 
-
-        for (asset, os, arch) in platforms {
+    for (asset, os, arch) in platforms {
         let url = format!(
             "{}/api/releases/latest?asset={}&os={}&arch={}",
-                client.host(),
-                asset,
-                os,
-                arch
+            client.host(),
+            asset,
+            os,
+            arch
         );
         info!("Downloading Zed release from {}", url);
         // response from server would be {"version":"0.187.8","url":"https://zed.dev/api/releases/stable/0.187.8/zed-linux-x86_64.tar.gz?update=1"}
@@ -401,10 +456,10 @@ pub async fn download_zed_release(client: &Client, root_dir: impl AsRef<Path>) {
                     let version: &str = release["version"].as_str().unwrap_or("unknown");
                     let download_url: &str = release["url"].as_str().unwrap_or("");
                     let releases_path = root_dir.as_ref().join("releases");
-                    
+
                     info!("Latest Zed version: {}", version);
                     info!("Download URL: {}", download_url);
-                    
+
                     // Create output directory if it doesn't exist
                     let output_dir = root_dir.as_ref().join("releases").join(version);
 
@@ -417,7 +472,7 @@ pub async fn download_zed_release(client: &Client, root_dir: impl AsRef<Path>) {
                     info!("Zed release cache saved to {:?}", cache_file);
 
                     std::fs::create_dir_all(&output_dir).unwrap();
-                    
+
                     // Download the file
                     let file_path = output_dir.join(format!("{}-{}-{}.tar.gz", asset, os, arch));
                     let download_result = client.http_client.get(download_url).send().await;
@@ -430,7 +485,10 @@ pub async fn download_zed_release(client: &Client, root_dir: impl AsRef<Path>) {
                                     match std::fs::File::create(&file_path) {
                                         Ok(mut file) => {
                                             if let Err(e) = file.write_all(&bytes) {
-                                                error!("Failed to write Zed release to file: {}", e);
+                                                error!(
+                                                    "Failed to write Zed release to file: {}",
+                                                    e
+                                                );
                                             } else {
                                                 info!("Zed release downloaded to {:?}", file_path);
                                             }
@@ -452,7 +510,7 @@ pub async fn download_zed_release(client: &Client, root_dir: impl AsRef<Path>) {
                 } else {
                     error!("Failed to fetch latest Zed release: {}", resp.status());
                 }
-            },
+            }
             Err(e) => error!("Error fetching latest Zed release: {}", e),
         }
     }
