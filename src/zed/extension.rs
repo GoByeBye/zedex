@@ -46,16 +46,17 @@ impl ExtensionVersionTracker {
 
     /// Add or update an extension version
     pub fn update_extension(&mut self, extension: &Extension) {
-        self.extensions.insert(extension.id.clone(), extension.version.clone());
+        self.extensions
+            .insert(extension.id.clone(), extension.version.clone());
     }
-    
+
     /// Merge another tracker into this one
     pub fn merge(&mut self, other: ExtensionVersionTracker) {
         for (id, version) in other.extensions {
             self.extensions.insert(id, version);
         }
     }
-    
+
     /// Check if an extension has a newer version than what we've tracked
     pub fn has_newer_version(&self, extension: &Extension) -> bool {
         match self.extensions.get(&extension.id) {
@@ -87,7 +88,7 @@ pub mod extensions_utils {
     use log::debug;
 
     /// Filter a collection of extensions by various criteria
-    /// 
+    ///
     /// # Arguments
     /// * `extensions` - The collection of extensions to filter
     /// * `filter` - Optional text to search in name, id, and description
@@ -99,9 +100,11 @@ pub mod extensions_utils {
         max_schema_version: Option<i32>,
         provides: Option<&str>,
     ) -> Extensions {
-        debug!("Filtering extensions with criteria: filter={:?}, max_schema_version={:?}, provides={:?}", 
-            filter, max_schema_version, provides);
-            
+        debug!(
+            "Filtering extensions with criteria: filter={:?}, max_schema_version={:?}, provides={:?}",
+            filter, max_schema_version, provides
+        );
+
         let filtered: Extensions = extensions
             .iter()
             .filter(|ext| {
@@ -111,30 +114,41 @@ pub mod extensions_utils {
                         return false;
                     }
                 }
-                
+
                 // Filter by text search if provided
                 if let Some(search_text) = filter {
-                    if !search_text.is_empty() && 
-                       !ext.name.to_lowercase().contains(&search_text.to_lowercase()) &&
-                       !ext.id.to_lowercase().contains(&search_text.to_lowercase()) &&
-                       !ext.description.to_lowercase().contains(&search_text.to_lowercase()) {
+                    if !search_text.is_empty()
+                        && !ext
+                            .name
+                            .to_lowercase()
+                            .contains(&search_text.to_lowercase())
+                        && !ext.id.to_lowercase().contains(&search_text.to_lowercase())
+                        && !ext
+                            .description
+                            .to_lowercase()
+                            .contains(&search_text.to_lowercase())
+                    {
                         return false;
                     }
                 }
-                
+
                 // Filter by provides capability if provided
                 if let Some(capability) = provides {
                     if !capability.is_empty() && !ext.provides_capability(capability) {
                         return false;
                     }
                 }
-                
+
                 true
             })
             .cloned()
             .collect();
-        
-        debug!("Filtered extensions from {} to {}", extensions.len(), filtered.len());
+
+        debug!(
+            "Filtered extensions from {} to {}",
+            extensions.len(),
+            filtered.len()
+        );
         filtered
     }
 }

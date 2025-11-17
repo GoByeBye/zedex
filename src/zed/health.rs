@@ -1,8 +1,8 @@
 use actix_web::{HttpResponse, Responder};
 use log::debug;
-use serde::{Serialize, Deserialize};
-use std::time::{SystemTime, UNIX_EPOCH};
 use once_cell::sync::OnceCell;
+use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Health check response structure
 #[derive(Serialize, Deserialize)]
@@ -20,7 +20,6 @@ pub struct HealthResponse {
     /// Number of extensions loaded
     extensions_loaded: u64,
 }
-
 
 /// Server uptime tracking
 static SERVER_START_TIME: OnceCell<u64> = OnceCell::new();
@@ -47,16 +46,16 @@ fn get_start_time() -> u64 {
 /// Health check handler that returns service status in JSON format
 pub async fn health_check() -> impl Responder {
     debug!("Health check requested");
-    
+
     // Get current time
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    
+
     // Calculate uptime
     let uptime = now - get_start_time();
-    
+
     // Create health response
     let mut health = HealthResponse {
         status: "OK".to_string(),
@@ -72,18 +71,18 @@ pub async fn health_check() -> impl Responder {
         health.status = "ERROR".to_string();
         health.reason = "No extensions found".to_string();
     }
-    
+
     // Return JSON response
     if health.status == "OK" {
         HttpResponse::Ok().json(health)
     } else {
         HttpResponse::InternalServerError().json(health)
     }
-
 }
 
 pub fn get_extensions_loaded_count() -> u64 {
-    let dir = std::env::var("ZED_EXTENSIONS_LOCAL_DIR").unwrap_or_else(|_| ".zedex-cache".to_string());
+    let dir =
+        std::env::var("ZED_EXTENSIONS_LOCAL_DIR").unwrap_or_else(|_| ".zedex-cache".to_string());
     match std::fs::read_dir(&dir) {
         Ok(entries) => entries.count() as u64,
         Err(_) => 0, // If the directory doesn't exist or can't be read, return 0

@@ -59,6 +59,26 @@ cargo build --release
 ./target/release/zedex --help
 ```
 
+### Development
+
+This repository currently targets Rust 2024, so you need a nightly toolchain until the edition stabilises. Recommended workflow:
+
+```bash
+rustup toolchain install nightly
+rustup component add rustfmt clippy --toolchain nightly
+
+# Format / test with nightly
+cargo +nightly fmt
+cargo +nightly test
+```
+
+Some dependencies (e.g. `reqwest` via `openssl-sys`) require native OpenSSL headers. On Debian/Ubuntu, install them with:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y pkg-config libssl-dev
+```
+
 ## Wishlist
 - [x] Support updating extensions by the call Zed makes on startup
 - [ ] Release notes mirror as in praktisk's implementation 
