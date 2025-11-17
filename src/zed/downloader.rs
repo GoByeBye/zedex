@@ -382,10 +382,13 @@ pub async fn download_zed_release(client: &Client, root_dir: impl AsRef<Path>) {
     ];
 
 
-    for (asset,os, arch) in platforms {
+        for (asset, os, arch) in platforms {
         let url = format!(
             "{}/api/releases/latest?asset={}&os={}&arch={}",
-            client.host, asset, os, arch
+                client.host(),
+                asset,
+                os,
+                arch
         );
         info!("Downloading Zed release from {}", url);
         // response from server would be {"version":"0.187.8","url":"https://zed.dev/api/releases/stable/0.187.8/zed-linux-x86_64.tar.gz?update=1"}
